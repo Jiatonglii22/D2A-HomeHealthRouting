@@ -4,7 +4,6 @@ import pandas as pd
 from gurobipy import GRB
 
 def build_model(nurse_avail, patient_appt, dist, w_c): 
-    print("in build model")
     model = gp.Model('Patient Assignments')
 
     # parameters 
@@ -32,8 +31,6 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
                 start[nurse][day] = 0 
                 end[nurse][day] = 0  
 
-    print('availability', A)
-
     patients = patient_appt['patient_id'].unique() 
 
     P = {} # patient appointments - 1 if patient needs appointment on day d, 0 otherwise
@@ -52,26 +49,24 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
                 P[patient][day] = 0 
                 l[patient][day] = 0 
 
-    print('patients', P)
-
     cpg = 0.5 # cost per mileage 
     c = {} # distance from nurse i's home base to patient j × cpg 
+    tau = {} # travel minutes from origin to destination 
     for _, row in dist.iterrows(): 
         origin = row['origin'] 
         dest = row['destination']
 
         miles = float(row['distance_miles']) 
+        travel_minutes = int(row['travel_minutes'])
 
         if origin not in c: 
             c[origin] = {} 
+            tau[origin] = {} 
 
         travel_cost = miles * cpg 
 
         c[origin][dest] = travel_cost 
-
-    print('cost', c)
-
-    travel_buffer = 30 # travel buffer of 30 minutes between locations 
+        tau[origin][dest] = travel_minutes
 
     # decision variables 
     # x_ijd = 1 if nurse i is assigned to patient j on day d, 0 otherwise 
@@ -90,8 +85,6 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
         vtype=GRB.BINARY, 
         name='continuity'
     )
-
-    print('Made decision variables)')
 
     # constraints 
     # nurse availability 
@@ -114,7 +107,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
     # appointments stay within shift timings 
     model.addConstrs(
         (gp.quicksum(
-            x[i,j,d] * (l[j][d] + travel_buffer) 
+            x[i,j,d] * (l[j][d] + tau[i][j]) 
             for j in patients
         ) <= end[i][d] - start[i][d] 
          for i in nurses 
@@ -141,11 +134,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
          name='continuity_of_care'
     )
 
-    print('Added constraints')
-
     # objectives 
-    print("Sample keys in c:", list(c.keys())[:5])
-    print("Sample keys in x:", list(x.keys())[:5])
     travel_cost = gp.quicksum(
         c[i][j] * x[i,j,d]
         for i in nurses 
@@ -159,8 +148,6 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
     ) 
 
     model.setObjective(travel_cost + (w_c * continuity_penalty))
-
-    print('set objective')
 
     return model, x, z 
 

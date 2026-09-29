@@ -7,9 +7,9 @@ distance_df = pd.read_csv('./Datasets/Dummy/travel_matrix.csv')
 
 model, x, z = build_model(nurses_df, patients_df, distance_df, 0.5); 
 
-print('Optimizing...')
 model.optimize() 
-print('Done')
 
 assert model.Status == 2, model.Status # ensures optimal solution is found 
 print(model.Status == 2) 
+for v in model.getVars(): 
+    print(f"{v.VarName} = {v.X}")
