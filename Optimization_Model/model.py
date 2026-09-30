@@ -25,7 +25,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
             if len(match) > 0: 
                 A[nurse][day] = int(match.iloc[0]['available'])
                 start[nurse][day] = time_to_minutes(match.iloc[0]['start_time'])
-                end[nurse][day] = time_to_minutes(match.iloc[0]['end_time']) 
+                end[nurse][day] = time_to_minutes(match.iloc[0]['end_time'])
             else: 
                 A[nurse][day] = 0 
                 start[nurse][day] = 0 
@@ -122,7 +122,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
          for i in nurses 
          for d in days
          if start[i][d] is not None and end[i][d] is not None), 
-         name='limit_shift_hours'
+        name='limit_shift_hours'
     )
 
     # continuity of care 

@@ -3,7 +3,7 @@ from Optimization_Model.model import build_model
 
 patients_df = pd.read_csv('./Datasets/Dummy/patient_appointments.csv')
 nurses_df = pd.read_csv('./Datasets/Dummy/nurse_availability.csv')
-distance_df = pd.read_csv('./Datasets/Dummy/travel_matrix.csv')
+distance_df = pd.read_csv('./Datasets/Processed/travel_car.csv')
 
 model, x, z = build_model(nurses_df, patients_df, distance_df, 0.5); 
 
