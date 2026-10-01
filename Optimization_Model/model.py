@@ -147,7 +147,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
         for j in patients 
     ) 
 
-    model.setObjective(travel_cost + (w_c * continuity_penalty))
+    model.setObjective(travel_cost + (w_c * continuity_penalty), GRB.MINIMIZE)
 
     return model, x, z 
 
