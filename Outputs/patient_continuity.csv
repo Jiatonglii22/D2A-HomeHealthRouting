@@ -1,7 +1,1 @@
-Patient_ID,Nurse_IDs,Continuity Penalty,Weighted_Penalty
-P007,"N002, N003",1,0.5
-P010,"N001, N003",1,0.5
-P016,"N004, N006",1,0.5
-P025,"N002, N004",1,0.5
-P001,"N001, N003",1,0.5
-P014,"N004, N006",1,0.5
+

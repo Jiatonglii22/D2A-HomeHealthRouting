@@ -2,8 +2,10 @@ import pandas as pd
 from pathlib import Path 
 from Optimization_Model.model import build_model 
 
-patients_df = pd.read_csv('./Datasets/Dummy/patient_appointments.csv')
-nurses_df = pd.read_csv('./Datasets/Dummy/nurse_availability.csv')
+DATA_DIR = './Datasets/Forecast/' # or './Datasets/Dummy/' (regenerate travel_car.csv to match) 
+
+patients_df = pd.read_csv(DATA_DIR + 'patient_appointments.csv')
+nurses_df = pd.read_csv(DATA_DIR + 'nurse_availability.csv')
 distance_df = pd.read_csv('./Datasets/Processed/travel_car.csv')
 
 w_c = 0.5

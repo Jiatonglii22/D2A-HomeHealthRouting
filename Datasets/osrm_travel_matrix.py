@@ -1,8 +1,17 @@
 """
 Pull a travel-time / distance matrix from the public OSRM demo server.
 
-Writes travel_car.csv (long format, for Gurobi) plus two wide matrices for eyeballing.
+Writes travel_car.csv (long format, for Gurobi).
+
+Usage:
+    python Datasets/osrm_travel_matrix.py                         # Datasets/Forecast (default)
+    python Datasets/osrm_travel_matrix.py --data-dir Datasets/Dummy
+
+The data dir must contain nurses.csv and patients.csv with id, lat, lon columns.
 """
+
+import argparse
+import time
 
 import requests
 import pandas as pd
@@ -12,18 +21,26 @@ from pathlib import Path
 # Coordinates are (latitude, longitude) here -- the script flips them for OSRM.
 # ---------------------------------------------------------------------------
 DEPOT = ("Agency", 40.6847801208496, -80.0629425048828)
-NURSES_CSV = Path(__file__).parent / "Dummy" / "nurses.csv"
-PATIENTS_CSV = Path(__file__).parent / "Dummy" / "patients.csv"
+DEFAULT_DATA_DIR = Path(__file__).parent / "Forecast"
+OUTPUT_PATH = Path(__file__).parent / "Processed" / "travel_car.csv"
 
 OSRM_URL = "http://router.project-osrm.org/table/v1/driving/"
+MAX_COORDS_PER_REQUEST = 100   # demo server rejects larger tables with "TooBig"
+REQUEST_PAUSE_SECONDS = 1      # be polite to the shared demo server
 
 
-def fetch_matrix(nodes):
+def fetch_block(sources, destinations):
     # OSRM wants lon,lat
-    coord_str = ";".join(f"{lon},{lat}" for _, lat, lon in nodes)
-    url = f"{OSRM_URL}{coord_str}?annotations=duration,distance"
+    block_nodes = sources + destinations
+    coord_str = ";".join(f"{lon},{lat}" for _, lat, lon in block_nodes)
+    src_idx = ";".join(str(k) for k in range(len(sources)))
+    dst_idx = ";".join(str(len(sources) + k) for k in range(len(destinations)))
+    url = (
+        f"{OSRM_URL}{coord_str}?sources={src_idx}&destinations={dst_idx}"
+        "&annotations=duration,distance"
+    )
 
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     data = resp.json()
 
@@ -33,12 +50,43 @@ def fetch_matrix(nodes):
     return data["durations"], data["distances"]
 
 
-def load_nodes():
-    nurses = pd.read_csv(NURSES_CSV)
+def fetch_matrix(nodes):
+    # Split the full N x N table into blocks of at most MAX_COORDS_PER_REQUEST coordinates
+    n = len(nodes)
+    block = MAX_COORDS_PER_REQUEST // 2
+    durations = [[None] * n for _ in range(n)]
+    distances = [[None] * n for _ in range(n)]
+
+    starts = range(0, n, block)
+    total = len(starts) ** 2
+    done = 0
+    for si in starts:
+        for di in starts:
+            dur, dist = fetch_block(nodes[si:si + block], nodes[di:di + block])
+            for a, (dur_row, dist_row) in enumerate(zip(dur, dist)):
+                durations[si + a][di:di + len(dur_row)] = dur_row
+                distances[si + a][di:di + len(dist_row)] = dist_row
+            done += 1
+            print(f"  block {done}/{total}")
+            time.sleep(REQUEST_PAUSE_SECONDS)
+
+    unroutable = [
+        (nodes[i][0], nodes[j][0])
+        for i in range(n) for j in range(n)
+        if durations[i][j] is None or distances[i][j] is None
+    ]
+    if unroutable:
+        raise RuntimeError(f"OSRM found no route for {len(unroutable)} pairs, e.g. {unroutable[:5]}")
+
+    return durations, distances
+
+
+def load_nodes(data_dir):
+    nurses = pd.read_csv(data_dir / "nurses.csv")
     nurse_nodes = nurses[["nurse_id", "lat", "lon"]].itertuples(
         index=False, name=None
     )
-    patients = pd.read_csv(PATIENTS_CSV)
+    patients = pd.read_csv(data_dir / "patients.csv")
     patient_nodes = patients[["patient_id", "lat", "lon"]].itertuples(
         index=False, name=None
     )
@@ -46,8 +94,14 @@ def load_nodes():
 
 
 def main():
-    nodes = load_nodes()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR,
+                        help="folder with nurses.csv and patients.csv (default: Datasets/Forecast)")
+    args = parser.parse_args()
+
+    nodes = load_nodes(args.data_dir)
     names = [node[0] for node in nodes]
+    print(f"Fetching {len(names)} x {len(names)} matrix from OSRM for {args.data_dir}")
     durations, distances = fetch_matrix(nodes)
 
     rows = []
@@ -61,13 +115,12 @@ def main():
             })
 
     df = pd.DataFrame(rows)
-    output_path = Path(__file__).parent / "Processed" / "travel_car.csv"
-    df.to_csv(output_path, index=False)
+    df.to_csv(OUTPUT_PATH, index=False)
 
     # Sanity checks
     diag = [durations[i][i] for i in range(len(names))]
-    print(f"\nDiagonal (should all be 0): {diag}")
-    print(f"Nodes: {len(names)}  |  rows written: {len(df)}")
+    print(f"\nDiagonal all zero: {all(v == 0 for v in diag)}")
+    print(f"Nodes: {len(names)}  |  rows written: {len(df)}  |  {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
