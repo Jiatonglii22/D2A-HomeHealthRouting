@@ -26,8 +26,8 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 # Average number of weeks in a year
 WEEKS_PER_YEAR = 52
 
-# Assumed nursing visit duration
-SERVICE_TIME_MINUTES = 60
+# Appointment durations
+APPOINTMENT_DURATIONS = [30, 60, 90]
 
 
 # ============================================================
@@ -68,10 +68,16 @@ os.makedirs("Datasets/Processed", exist_ok=True)
 
 print("Loading CMS utilization data...")
 
-cms = pd.read_csv(UTILIZATION_FILE, low_memory=False)
+cms = pd.read_csv(
+    UTILIZATION_FILE,
+    low_memory=False
+)
 
 cms["PRVDR_ID"] = (
-    pd.to_numeric(cms["PRVDR_ID"], errors="coerce")
+    pd.to_numeric(
+        cms["PRVDR_ID"],
+        errors="coerce"
+    )
     .astype("Int64")
     .astype(str)
 )
@@ -83,13 +89,13 @@ cms = cms[cms["PRVDR_ID"] != "<NA>"].copy()
 #   2024
 #   Calendar year
 #   Home Health
+#   Selected agency
 agency_cms = cms[
     (cms["YEAR"] == 2024)
     & (cms["YEAR_TYPE"] == "CY")
     & (cms["SRVC_CTGRY"] == "HH")
     & (cms["PRVDR_ID"] == AGENCY_ID)
 ].copy()
-
 
 if agency_cms.empty:
     raise ValueError(
@@ -130,7 +136,6 @@ annual_nursing_visits = int(
     )
 )
 
-
 print("\nAnnual CMS utilization:")
 print(f"  Beneficiaries:    {annual_beneficiaries:,}")
 print(f"  Episodes:         {annual_episodes:,}")
@@ -149,7 +154,6 @@ expected_weekly_episodes = (
     annual_episodes / WEEKS_PER_YEAR
 )
 
-
 print("\nExpected weekly utilization:")
 print(
     f"  Weekly episodes: "
@@ -165,22 +169,22 @@ print(
 # ============================================================
 # 4. SAMPLE A REALISTIC WEEKLY NUMBER OF VISITS
 # ============================================================
-#
+
 # We use a Poisson distribution around the annual average.
 #
 # Example:
+#
 #     annual visits = 9,946
 #     expected weekly = 191.27
 #
 # One synthetic week could therefore have:
+#
 #     188 visits
 #     193 visits
 #     197 visits
-#     etc.
 #
 # This avoids artificially forcing every week to contain
-# exactly 191 visits.
-# ============================================================
+# exactly the same number of visits.
 
 weekly_nursing_visits = int(
     rng.poisson(expected_weekly_visits)
@@ -227,7 +231,9 @@ if agency_zip.empty:
 
 print("\nLoading ZIP polygons...")
 
-zip_gdf = gpd.read_file(ZIP_SHAPEFILE)
+zip_gdf = gpd.read_file(
+    ZIP_SHAPEFILE
+)
 
 zip_gdf["ZIP"] = (
     zip_gdf["ZIP"]
@@ -246,12 +252,10 @@ agency_zip = agency_zip[
     agency_zip["zip"].isin(zip_gdf["ZIP"])
 ].copy()
 
-
 if agency_zip.empty:
     raise ValueError(
         "No agency ZIPs matched the ZIP shapefile."
     )
-
 
 print(
     f"Matched {len(agency_zip)} agency-ZIP rows "
@@ -262,13 +266,12 @@ print(
 # ============================================================
 # 7. CREATE ZIP SAMPLING PROBABILITIES
 # ============================================================
-#
+
 # estimated_agency_zip_episodes represents the estimated
 # annual number of episodes for this agency in each ZIP.
 #
 # We use this as the probability that a synthetic patient/
 # episode is located in each ZIP.
-# ============================================================
 
 agency_zip["zip_probability"] = (
     agency_zip["estimated_agency_zip_episodes"]
@@ -291,15 +294,6 @@ agency_zip["zip_probability"] = (
 # ============================================================
 # 8. CREATE SYNTHETIC BENEFICIARIES
 # ============================================================
-#
-# We create the actual number of distinct beneficiaries:
-#
-#       2,257
-#
-# This is different from the 3,919 annual episodes.
-#
-# A beneficiary may have more than one episode.
-# ============================================================
 
 print("\nCreating synthetic beneficiaries...")
 
@@ -316,22 +310,10 @@ patients["agency_id"] = AGENCY_ID
 # ============================================================
 # 9. ASSIGN ANNUAL EPISODES TO BENEFICIARIES
 # ============================================================
-#
+
 # Every beneficiary gets at least one episode.
 #
 # Remaining episodes are randomly assigned to beneficiaries.
-#
-# Example:
-#
-#   2,257 beneficiaries
-#   3,919 episodes
-#
-# Therefore:
-#
-#   3,919 - 2,257 = 1,662
-#
-# additional episodes are distributed among patients.
-# ============================================================
 
 patients["annual_episodes"] = 1
 
@@ -344,12 +326,10 @@ if additional_episodes < 0:
         "Annual episodes cannot be less than distinct beneficiaries."
     )
 
-
 # Probability weighting:
 # patients with more episodes become more likely to receive
 # another episode. Initially everyone has equal probability.
-#
-# This creates a mild concentration of repeat episodes.
+
 for _ in range(additional_episodes):
 
     probabilities = (
@@ -385,129 +365,120 @@ print(
 
 
 # ============================================================
-# 10. SAMPLE WHICH PATIENTS HAVE VISITS THIS WEEK
-# ============================================================
-#
-# A patient's probability of appearing in the week is based
-# on their annual number of episodes.
-#
-# More annual episodes -> higher probability of appearing
-# in a randomly selected week.
-#
-# We sample patients WITHOUT replacement here so that each
-# selected patient initially contributes one weekly visit.
-# Additional weekly visits are assigned afterward.
+# 10. Assign weekly visits to patients
 # ============================================================
 
-patient_weights = (
-    patients["annual_episodes"]
-    / patients["annual_episodes"].sum()
+# Every patient can have 1, 2, or 3 visits per week.
+MIN_VISITS_PER_PATIENT = 1
+MAX_VISITS_PER_PATIENT = 3
+
+# Make sure the requested weekly demand is feasible
+max_possible_visits = len(patients) * MAX_VISITS_PER_PATIENT
+
+if weekly_nursing_visits > max_possible_visits:
+    raise ValueError(
+        f"Weekly demand ({weekly_nursing_visits}) exceeds the maximum "
+        f"possible visits ({max_possible_visits}) with at most "
+        f"{MAX_VISITS_PER_PATIENT} visits per patient."
+    )
+
+# ------------------------------------------------------------
+# Determine how many patients will receive at least one visit
+# ------------------------------------------------------------
+
+# We need at least ceil(total visits / 3) patients
+# and at most total visits patients.
+#
+# Use a random number of active patients between those bounds.
+min_active_patients = int(
+    np.ceil(weekly_nursing_visits / MAX_VISITS_PER_PATIENT)
 )
 
-patient_weights = patient_weights.to_numpy()
-
-# Number of patients needed cannot exceed population
-initial_weekly_patients = min(
+max_active_patients = min(
     weekly_nursing_visits,
     len(patients)
 )
 
-selected_patient_indices = rng.choice(
-    len(patients),
-    size=initial_weekly_patients,
-    replace=False,
-    p=patient_weights
+# Randomly choose the number of patients who receive visits
+n_active_patients = rng.integers(
+    min_active_patients,
+    max_active_patients + 1
 )
 
-weekly_patients = patients.iloc[
-    selected_patient_indices
-].copy()
+# Randomly select the patients who will have visits this week
+active_patient_indices = rng.choice(
+    patients.index,
+    size=n_active_patients,
+    replace=False
+)
 
+# Start everyone with 1 visit
+weekly_patients = patients.loc[active_patient_indices].copy()
 weekly_patients["weekly_visits"] = 1
 
+# ------------------------------------------------------------
+# Distribute remaining visits
+# ------------------------------------------------------------
 
-# ============================================================
-# 11. ASSIGN REMAINING WEEKLY VISITS
-# ============================================================
-#
-# If weekly visits > number of selected patients, some patients
-# receive a second visit.
-#
-# The probability is based on annual episode count.
-#
-# We cap weekly visits at 5 per patient because the current
-# planning horizon is Monday-Friday and we want at most one
-# visit per patient per day.
-# ============================================================
-
-remaining_visits = (
-    weekly_nursing_visits
-    - len(weekly_patients)
-)
-
-MAX_WEEKLY_VISITS_PER_PATIENT = 5
-
+remaining_visits = weekly_nursing_visits - n_active_patients
 
 while remaining_visits > 0:
 
-    eligible = weekly_patients[
-        weekly_patients["weekly_visits"]
-        < MAX_WEEKLY_VISITS_PER_PATIENT
-    ].copy()
+    # Patients who can still receive another visit
+    eligible_indices = weekly_patients.index[
+        weekly_patients["weekly_visits"] < MAX_VISITS_PER_PATIENT
+    ]
 
-    if eligible.empty:
-        raise ValueError(
-            "Unable to assign all weekly visits without "
-            "exceeding 5 visits per patient."
-        )
+    # Randomly choose one eligible patient
+    patient_idx = rng.choice(eligible_indices)
 
-    weights = (
-        eligible["annual_episodes"]
-        .to_numpy()
-    )
-
-    weights = weights / weights.sum()
-
-    selected_index = rng.choice(
-        eligible.index.to_numpy(),
-        p=weights
-    )
-
+    # Add one visit
     weekly_patients.loc[
-        selected_index,
+        patient_idx,
         "weekly_visits"
     ] += 1
 
     remaining_visits -= 1
 
 
-print(
-    "\nWeekly patient/visit summary:"
-)
+# ------------------------------------------------------------
+# Print distribution
+# ------------------------------------------------------------
+
+patients_1_visit = (
+    weekly_patients["weekly_visits"] == 1
+).sum()
+
+patients_2_visits = (
+    weekly_patients["weekly_visits"] == 2
+).sum()
+
+patients_3_visits = (
+    weekly_patients["weekly_visits"] == 3
+).sum()
+
+print("\nWeekly visit distribution:")
+print(f"  1 visit/week: {patients_1_visit} patients")
+print(f"  2 visits/week: {patients_2_visits} patients")
+print(f"  3 visits/week: {patients_3_visits} patients")
+
+print(f"  Total patients: {len(weekly_patients)}")
 
 print(
-    f"  Patients with visits: "
-    f"{len(weekly_patients)}"
-)
-
-print(
-    f"  Weekly visits: "
+    f"  Total visits: "
     f"{weekly_patients['weekly_visits'].sum()}"
 )
 
 print(
-    f"  Maximum visits for one patient: "
-    f"{weekly_patients['weekly_visits'].max()}"
+    f"  Target weekly visits: "
+    f"{weekly_nursing_visits}"
 )
-
-
 # ============================================================
-# 12. ASSIGN ZIP CODES TO WEEKLY PATIENTS
+# 11. ASSIGN ZIP CODES TO WEEKLY PATIENTS
 # ============================================================
-#
+
 # ZIP assignment is based on the agency's estimated annual
 # episode demand by ZIP.
-# ============================================================
 
 weekly_patients["zip"] = rng.choice(
     agency_zip["zip"].to_numpy(),
@@ -517,7 +488,7 @@ weekly_patients["zip"] = rng.choice(
 
 
 # ============================================================
-# 13. GENERATE RANDOM LOCATION INSIDE EACH ZIP POLYGON
+# 12. GENERATE RANDOM LOCATION INSIDE EACH ZIP POLYGON
 # ============================================================
 
 print("\nGenerating patient locations...")
@@ -575,7 +546,7 @@ patient_gdf = gpd.GeoDataFrame(
 
 
 # ============================================================
-# 14. CONVERT TO LATITUDE/LONGITUDE
+# 13. CONVERT TO LATITUDE/LONGITUDE
 # ============================================================
 
 patient_gdf = patient_gdf.to_crs(
@@ -597,7 +568,7 @@ patients_output = patient_gdf.drop(
 
 
 # ============================================================
-# 15. SAVE PATIENT DATA
+# 14. SAVE PATIENT DATA
 # ============================================================
 
 patients_output.to_csv(
@@ -612,14 +583,21 @@ print(
 
 
 # ============================================================
-# 16. CREATE WEEKLY APPOINTMENTS
+# 15. CREATE WEEKLY APPOINTMENTS
 # ============================================================
-#
+
 # Each nursing visit becomes one appointment.
 #
-# A patient can have multiple visits in the week, but never
-# more than one visit on the same weekday.
-# ============================================================
+# Each patient has 1-3 appointments per week.
+#
+# A patient cannot have more than one appointment on
+# the same weekday.
+#
+# Appointment durations are randomly selected from:
+#
+#     30 minutes
+#     60 minutes
+#     90 minutes
 
 appointments = []
 
@@ -655,6 +633,11 @@ for _, patient in patients_output.iterrows():
         start=1
     ):
 
+        # Randomly select appointment duration
+        service_time = int(
+            rng.choice(APPOINTMENT_DURATIONS)
+        )
+
         appointments.append({
             "appointment_id": (
                 f"{patient['patient_id']}_"
@@ -664,7 +647,7 @@ for _, patient in patients_output.iterrows():
             "agency_id": AGENCY_ID,
             "zip": patient["zip"],
             "day": day,
-            "service_time_minutes": SERVICE_TIME_MINUTES,
+            "service_time_minutes": service_time,
             "latitude": patient["latitude"],
             "longitude": patient["longitude"]
         })
@@ -676,7 +659,7 @@ appointments_df = pd.DataFrame(
 
 
 # ============================================================
-# 17. SAVE APPOINTMENTS
+# 16. SAVE APPOINTMENTS
 # ============================================================
 
 appointments_df.to_csv(
@@ -691,7 +674,7 @@ print(
 
 
 # ============================================================
-# 18. VALIDATION
+# 17. VALIDATION
 # ============================================================
 
 print("\n" + "=" * 60)
@@ -719,13 +702,23 @@ print(
 )
 
 print(
-    f"Sampled weekly visits: "
+    f"Sampled CMS weekly visits: "
+    f"{weekly_nursing_visits:,}"
+)
+
+print(
+    f"Generated appointments: "
     f"{len(appointments_df):,}"
 )
 
 print(
     f"Weekly patients: "
     f"{len(weekly_patients):,}"
+)
+
+print(
+    f"Minimum visits/patient: "
+    f"{appointments_df.groupby('patient_id').size().min()}"
 )
 
 print(
@@ -741,6 +734,14 @@ print(
     .reindex(DAYS)
     .fillna(0)
     .astype(int)
+)
+
+print("\nAppointment duration distribution:")
+
+print(
+    appointments_df["service_time_minutes"]
+    .value_counts()
+    .sort_index()
 )
 
 print("\nAppointments by ZIP:")
@@ -759,4 +760,45 @@ print(
     ].describe()
 )
 
+
+# ============================================================
+# FINAL VALIDATION CHECKS
+# ============================================================
+
+# Total appointments must exactly equal the CMS-derived
+# sampled weekly nursing visit target.
+assert len(appointments_df) == weekly_nursing_visits, (
+    "Total generated appointments do not match "
+    "the CMS-derived weekly visit target."
+)
+
+# Every patient has between 1 and 3 appointments.
+visits_per_patient = (
+    appointments_df
+    .groupby("patient_id")
+    .size()
+)
+
+assert visits_per_patient.between(1, 3).all(), (
+    "Some patients have fewer than 1 or more than 3 "
+    "appointments."
+)
+
+# No patient has multiple appointments on the same weekday.
+assert not appointments_df.duplicated(
+    subset=["patient_id", "day"]
+).any(), (
+    "A patient has multiple appointments on the same day."
+)
+
+# Every appointment has a valid duration.
+assert appointments_df[
+    "service_time_minutes"
+].isin(
+    APPOINTMENT_DURATIONS
+).all(), (
+    "Unexpected appointment duration found."
+)
+
+print("\nAll appointment validation checks passed.")
 print("\nDone.")
