@@ -1,0 +1,20 @@
+# Python 3.12 (geopandas 1.x needs Python >= 3.10)
+# Setup:  python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+
+# Data handling (all models)
+pandas==3.0.6
+numpy==2.5.3
+
+# Optimization_Model/model.py - assignment (Layer 1); needs a Gurobi license for models over 2000 variables
+gurobipy==13.0.3
+
+# Prediction_Model - geospatial and source data
+geopandas==1.2.0
+shapely==2.1.2
+pyogrio==0.13.0        # file engine geopandas uses for gpd.read_file (zip code shapefile)
+openpyxl==3.1.5        # pd.read_excel on Datasets/Raw/ZIP-TRACT_122024.xlsx
+requests==2.34.2       # Datasets/osrm_travel_matrix.py
+
+# analysis.ipynb
+matplotlib==3.11.2
+ipykernel==7.4.0
