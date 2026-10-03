@@ -49,7 +49,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
                 P[patient][day] = 0 
                 l[patient][day] = 0 
 
-    cpg = 0.5 # cost per mileage 
+    cpg = 0.235 # cost per mileage 
     c = {} # distance from nurse i's home base to patient j × cpg 
     tau = {} # travel minutes from origin to destination 
     for _, row in dist.iterrows(): 
@@ -114,15 +114,6 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
          for d in days 
          if start[i][d] is not None and end[i][d] is not None), 
          name='hours_worked'
-    )
-
-    # limit shift hours to 8 hours (or 480 minutes) 
-    model.addConstrs(
-        (end[i][d] - start[i][d] <= 480 
-         for i in nurses 
-         for d in days
-         if start[i][d] is not None and end[i][d] is not None), 
-        name='limit_shift_hours'
     )
 
     # continuity of care 
