@@ -57,7 +57,7 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
         dest = row['destination']
 
         miles = float(row['distance_miles']) 
-        travel_minutes = int(row['travel_minutes'])
+        travel_minutes = float(row['travel_minutes'])
 
         if origin not in c: 
             c[origin] = {} 
@@ -104,12 +104,22 @@ def build_model(nurse_avail, patient_appt, dist, w_c):
          name='patient_appt_fulfullment'
     )
 
+    # drive home at the end of the day: at least the return trip from any patient the nurse visits
+    home = model.addVars(nurses, days, lb=0, name='drive_home')
+    model.addConstrs(
+        (home[i,d] >= tau[j][i] * x[i,j,d]
+         for i in nurses
+         for j in patients
+         for d in days),
+         name='drive_home_time'
+    )
+
     # appointments stay within shift timings 
     model.addConstrs(
         (gp.quicksum(
             x[i,j,d] * (l[j][d] + tau[i][j]) 
             for j in patients
-        ) <= end[i][d] - start[i][d] 
+        ) + home[i,d] <= end[i][d] - start[i][d] 
          for i in nurses 
          for d in days 
          if start[i][d] is not None and end[i][d] is not None), 

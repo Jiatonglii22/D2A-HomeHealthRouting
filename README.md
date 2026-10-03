@@ -1,5 +1,32 @@
 # D2A-HomeHealthRouting
 
+## Changelog
+
+Newest first. Each entry lists what changed, where, and what it means for anyone pulling.
+
+### 2026-10-03: drive-home fix, staffing sweep, presentation figures (vidhi-ds-24)
+
+**Note: this changes assignment results.** The updated `Outputs/` are included, so there's nothing to re-run after pulling. Anything you built on the old outputs (notebooks, slides) may need refreshing.
+
+| Change | Files | Why / effect |
+|---|---|---|
+| **Changed:** assignment budgets the drive home | `Optimization_Model/model.py` | New variable `home[i,d]` (drive home from the farthest patient that day) added to `hours_worked`. Agreed with the team: the old budget left out the drive home, so 2 nurse-days couldn't be driven. Now all 50 nurse-days and 203 visits route. Objective 360.21 → 366.51; patients seeing more than one nurse 8 → 12 at `w_c = 0.5`. |
+| **Changed:** travel times read as decimals | `Optimization_Model/model.py` line 60 | `int(row['travel_minutes'])` → `float(...)`. `int` dropped the fraction of every travel time. |
+| **Regenerated:** all outputs | `Outputs/nurse_daily_assignments.csv`, `patient_continuity.csv`, `route_*.csv`, `unroutable_nurse_days.csv` | Re-run with the fixed model; `unroutable_nurse_days.csv` is now empty. |
+| **New:** staffing sweep | `Optimization_Model/sweep.py`, `Outputs/staffing_sweep.csv` | 5 roster sizes × 5 random rosters × 9 continuity weights, each scored on real routes. See [Staffing sweep](#staffing-sweep). |
+| **New:** presentation figures | `Optimization_Model/figures.py`, `Outputs/figures/` | Continuity-cost curve, cost by roster size, nurse time breakdown, daily route maps; 300 dpi PNG + SVG. See [Figures](#figures). |
+| **README** | this file | Added this changelog and the [Staffing sweep](#staffing-sweep) and [Figures](#figures) sections. Updated [Pipeline](#pipeline) (new commands, assignment now includes the drive home), [Current results](#current-results-forecast-week-11-nurses-w_c--05) and [Limitations](#limitations) (fix adopted; what remains). |
+
+### 2026-10-03: sequencing (Layer 2) and setup (vidhi-ds-24)
+
+Commits `34206a6`, `144e0c8`, `c3dc88a`. No change to existing code.
+
+| Change | Files | Why / effect |
+|---|---|---|
+| **New:** sequencing | `Optimization_Model/sequencing.py`, `Outputs/route_*.csv`, `Outputs/unroutable_nurse_days.csv` | Orders each nurse-day's visits into a drivable route, reading the assignment output. See [Sequencing](#sequencing-layer-2). |
+| **New:** dependencies | `requirements.txt` | Pinned packages for all models, tested on Python 3.12. See [Setup](#setup). |
+| **README** | this file | Added [Setup](#setup), [Pipeline](#pipeline), [Sequencing](#sequencing-layer-2) and [Limitations](#limitations). The `#Prediction Model:` heading was reformatted to `## Prediction Model` so it renders as a heading; its text is unchanged. |
+
 ## Prediction Model
 
 Agency-level demand allocation model is used to estimate agency-specific demand spatially using ACS need indicators, then use that estimated demand to create synthetic patients that Gurobi will route.
@@ -20,12 +47,14 @@ pip install -r requirements.txt
 
 The optimization runs in two layers:
 
-1. **Assignment (Layer 1)**, `Optimization_Model/model.py`, run by `main.py`: a Gurobi MILP that decides which nurse sees which patient each day. It minimizes mileage cost from each nurse's home plus a continuity penalty `w_c` for every extra nurse a patient sees.
+1. **Assignment (Layer 1)**, `Optimization_Model/model.py`, run by `main.py`: a Gurobi MILP that decides which nurse sees which patient each day. It minimizes mileage cost from each nurse's home plus a continuity penalty `w_c` for every extra nurse a patient sees. Each nurse-day's visits, the drive to each one, and the drive home must fit within the shift.
 2. **Sequencing (Layer 2)**, `Optimization_Model/sequencing.py`: takes those assignments and finds the visit order and timetable for every nurse-day.
 
 ```bash
 python main.py                            # Layer 1 -> Outputs/nurse_daily_assignments.csv, patient_continuity.csv
 python -m Optimization_Model.sequencing   # Layer 2 -> Outputs/route_*.csv, unroutable_nurse_days.csv
+python -m Optimization_Model.sweep        # staffing sweep -> Outputs/staffing_sweep.csv (about 3 min)
+python -m Optimization_Model.figures      # presentation charts -> Outputs/figures/ (from the CSVs above, no re-solving)
 ```
 
 ## Sequencing (Layer 2)
@@ -66,30 +95,132 @@ Visit length and time windows are looked up by (patient, day), because the same 
 
 | Measure | Value |
 |---|---|
-| Nurse-days routed | 48 of 50, all by trying every order |
-| Visits scheduled | 190 of 203 |
-| Route miles / cost | 1,499.3 mi / $352.33 at $0.235 per mile |
-| Unroutable nurse-days | N008 Mon (shift overrun by 7 min), N006 Wed (overrun by 1 min) |
+| Nurse-days routed | 50 of 50, all by trying every order |
+| Visits scheduled | 203 of 203 |
+| Route miles / cost | 1,729.1 mi / $406.39 at $0.235 per mile |
+| Unroutable nurse-days | none |
+| Tightest route | N010 Wed, home 3.2 min before shift end |
+| Patients seen by more than one nurse | 12 |
 | Run time | under 1 second |
 
-The code was checked against a brute-force search over every visit order: on all 48 routed nurse-days, the chosen route is the cheapest feasible one.
+The code was checked against a brute-force search over every visit order: on all 50 nurse-days, the chosen route is the cheapest feasible one.
+
+## Staffing sweep
+
+`Optimization_Model/sweep.py` runs the whole pipeline many times, varying two things:
+
+- **The continuity weight `w_c`:** 0, 1, 2, 5, 10, 25, 50, 100, 500.
+- **The roster:** 7, 8, 9, 10 and 11 nurses. Each size is drawn 5 times at random (seeded), because which nurses are dropped matters as much as how many. Nurses differ in where they live and which days they work.
+
+That is 5 sizes × 5 draws × 9 weights = 225 runs. Each run:
+
+1. Solves assignment (Layer 1) with that roster and weight.
+2. Routes every nurse-day (Layer 2).
+3. Records the real result: route miles and cost from Layer 2, continuity from the assignment, and whether every nurse-day could be routed.
+
+### Why we need it
+
+**The continuity weight is a management judgement, not something the data settles.** No single value of `w_c` is right. It says how many dollars of driving one extra nurse per patient is worth, and that is the agency's call. A single run of the model gives one schedule for one arbitrary weight. The sweep instead shows the whole trade-off: what each step up in continuity costs in real driving. The agency can then pick its point on the curve.
+
+**It answers the staffing question.** Running the same trade-off at each roster size shows:
+
+- the smallest roster that can cover the week at all;
+- whether that roster can still give every patient a single nurse;
+- how much continuity costs as staff gets tighter.
+
+**It measures cost on real routes, not the model's estimate.** Assignment optimizes an estimate of driving (one-way miles from each nurse's home). The sweep scores every run on Layer 2's actual routes, so the curve shows money the agency would actually spend.
+
+### What it records (`staffing_sweep.csv`, one row per run)
+
+| Column | Meaning |
+|---|---|
+| `nurse_count`, `seed`, `roster`, `w_c` | which run |
+| `status` | `optimal`, or `infeasible` when the roster can't cover the week's visits within shifts |
+| `total_miles`, `total_cost` | real weekly route miles and cost, from Layer 2 |
+| `single_nurse_pct` | % of patients who see the same nurse for every visit that week (100% = full continuity) |
+| `patients_multi_nurse` | number of patients who see more than one nurse |
+| `distinct_nurses` | average number of different nurses per patient. Each patient sees a whole number of nurses (1, 2, …); this is the average over all patients, so 1.17 means roughly 1 patient in 6 sees two nurses. |
+| `primary_share` | share of all visits made by each patient's main nurse |
+| `unroutable_days` | nurse-days Layer 2 couldn't fit in the shift (should be 0) |
+| `wait_minutes`, `heuristic_routes`, `max_stops`, `min_slack_min` | route checks: waiting for windows, routes not solved exactly, busiest nurse-day, tightest return home |
+| `l1_objective`, `solve_seconds` | assignment's own objective and solve time |
+
+Continuity is computed from the actual assignments (`x`), not from the model's continuity variables (`z`). With `w_c = 0` nothing stops the solver from switching on extra `z` values for free.
+
+### Results
+
+**Staffing: the week needs 9 nurses, or 8 if all eight work every day.**
+
+| Roster | Can the week be covered? |
+|---|---|
+| 7 nurses | No, in all 5 random rosters. |
+| 8 nurses | Not in any of the 5 random rosters, each of which included both nurses with a day off. In a separate check, 8 of the 9 eight-nurse rosters where everyone works all five days could cover it. |
+| 9 nurses | Yes, all 5 rosters. In 2 of them one nurse-day couldn't be driven at low weights (see Limitations), so 3 of 5 rosters give a drivable schedule at every weight. |
+| 10, 11 nurses | Yes, all 5 rosters, every nurse-day drivable. With 11 nurses every draw is the full roster, so the 5 draws are identical. |
+
+**Continuity: most of it is nearly free, and the last few percent is what costs money.** Average over the rosters that give a drivable schedule at every weight:
+
+| Roster | Lowest cost (`w_c = 0`) | Small weight (`w_c = 1`) | Full continuity |
+|---|---|---|---|
+| 9 nurses | $398, 81% keep one nurse | $407, 93% | $445, 100% (+$47, +12%) |
+| 10 nurses | $395, 84% | $405, 94% | $426, 100% (+$31, +8%) |
+| 11 nurses | $397, 85% | $403, 95% | $432, 100% (+$35, +9%) |
+
+- **The first step is cheap.** Going from about 1 in 6 patients seeing two nurses to about 1 in 16 costs **$6–10 a week (about 2%)**.
+- **The last step is expensive.** Getting the final 5–7% of patients down to a single nurse costs another **$21–38 a week**.
+- **Tighter staffing makes full continuity dearer:** +12% at 9 nurses, +8–9% at 10–11.
+- **Above `w_c = 25`, nothing changes:** every patient already keeps one nurse.
+
+**Caution:** assignment optimizes its driving estimate, not real routes, so real cost can move by about $10–15 between runs for reasons unrelated to staffing or continuity. For example, 11 nurses shows a dip at `w_c = 2`. Read the overall shape of each line, not small differences between neighbouring points or lines.
+
+## Figures
+
+`python -m Optimization_Model.figures` draws every chart from the saved CSVs into `Outputs/figures/`. Each chart is saved as a 300 dpi PNG for slides and print, and as an SVG that scales to any size in PowerPoint or Google Slides.
+
+| Figure | Built from | Shows |
+|---|---|---|
+| `staffing_sweep` | staffing sweep | what continuity costs, at each roster size |
+| `cost_by_roster` | staffing sweep | lowest-cost vs full-continuity cost, per roster size |
+| `nurse_time_breakdown` | current run (`w_c = 0.5`, 11 nurses) | how each nurse's week splits into visits, driving and spare time |
+| `route_map_<day>` | current run | every nurse's route that day |
+
+### `staffing_sweep`: what continuity of care costs, by roster size
+
+**How to read it:** weekly route cost (y) against the % of patients who keep one nurse all week (x), one line per roster size, lighter blue for fewer nurses. Reading a line left to right shows what each step toward full continuity costs. Each point averages the rosters that give a drivable schedule at every weight. The legend says how many of the 5 rosters that is.
+
+**The point for a slide:** each line rises gently at first and steeply over the last few percent. Most continuity comes almost free; the last few patients are what cost money.
+
+### `cost_by_roster`: weekly route cost by roster size
+
+**How to read it:** for each roster size, two bars. Blue is the cheapest schedule, ignoring continuity (`w_c = 0`); orange is full continuity, every patient with one nurse (`w_c = 500`). Bars average the usable rosters, and whiskers span the cheapest to the most expensive roster. 7 and 8 nurses are marked "cannot cover the week".
+
+**The point for a slide:** the gap between blue and orange is the weekly price of full continuity, and it widens as staffing tightens: about $47 at 9 nurses against $31–35 at 10–11. The whiskers show that which nurses you have matters about as much as how many.
+
+### `nurse_time_breakdown`: how each nurse spends the week
+
+**How to read it:** one bar per nurse, stacked to her total shift hours for the week: visits (blue), driving (orange) and spare shift time (gray), with the % of shift time in use.
+
+**The point for a slide:** workload is uneven. N010 is 93% busy while N009 is 31% busy. Across all nurses, 66% of shift hours are used: 200 h of visits and 64 h of driving. The model doesn't balance workload, so this is a candidate for a future constraint.
+
+### `route_map_<day>`: nurse routes, one figure per day
+
+**How to read it:** one small map per working nurse, all panels on the same scale. The black square is her home, where the route starts and ends. The numbered blue dots are her visits in order, and the gray dots are every patient that week, for context. Each panel's title gives visits, miles, shift start and return time.
+
+**The point for a slide:** it shows the decomposition working. Layer 1 decides who goes where, and Layer 2 orders the visits into a drivable loop. Nurses mostly serve patients near their own home.
+
+There is no street basemap: the map uses patient and nurse coordinates only.
 
 ## Limitations
 
-**Assignment underestimates driving time, so a few nurse-days can't be routed.** Assignment's capacity constraint (`hours_worked`) budgets the one-way drive from the nurse's home to each patient, but not the drive back home at the end of the day. Layer 2 drives the full route, home → patients → home. So assignment underestimates daily driving on 37 of 50 nurse-days, by 27% on average. The gap is largest on light days: with one patient 40 minutes away, assignment budgets 40 minutes of driving, while the real route is 80.
+**Assignment estimates driving time; it doesn't know the real route.** Assignment decides visits before any route exists, so its capacity constraint (`hours_worked`) uses an estimate: the one-way drive from the nurse's home to each patient, plus the drive home from her farthest patient that day (`home[i,d]`). Layer 2 then drives the real route, home → patients → home.
 
-The effect on the current week is small: 2 of 50 nurse-days overrun the shift by 1 and 7 minutes (13 of 203 visits), and N010 Thu finishes with 0.1 minutes to spare. Layer 2 reports these rather than hiding them, in `unroutable_nurse_days.csv`.
+The estimate originally left out the drive home. That underestimated daily driving on 37 of 50 nurse-days, by 27% on average, and left 2 nurse-days unroutable (shift overruns of 1 and 7 minutes, 13 of 203 visits). The team adopted the fix: the drive-home term, plus reading `travel_minutes` as `float` instead of `int`, which had dropped the fraction of every travel time. Assignment still solves to optimal (objective 360.21 → 366.51), and all 50 nurse-days now route.
 
-This limitation will grow with fewer nurses. In the planned staffing sweep, rosters of about 7–9 nurses make days fuller and tighter, so expect more unroutable nurse-days. Decide on the fix below before running the sweep.
+What remains:
 
-**Proposed fix (not yet applied; up to the assignment model's owner):** add one variable per nurse-day, `home[i,d] >= tau[j][i] * x[i,j,d]` for every patient j, and add `+ home[i,d]` to the left side of `hours_worked`. This reserves at least the drive home from the farthest patient the nurse visits. It stays linear and leaves the objective unchanged. Also read `travel_minutes` as `float` rather than `int` (model.py line 60), which currently drops the fraction of every travel time.
+- **The estimate is now cautious.** It budgets about 20% more driving than the real routes need (4,599 vs 3,829 minutes this week). Nurses therefore take slightly fewer visits than they could, so continuity costs a little more: 12 patients see more than one nurse, against 8 before the fix.
+- **It is not guaranteed.** The drive home from the farthest patient stands in for the real route, so a nurse-day can still fail to fit. The staffing sweep found exactly that: in 3 of 135 solved runs, all on 9-nurse rosters at low weights, one nurse-day couldn't be driven. Layer 2's unroutable count is the check. Runs that fail it are left out of the sweep's charts, and `unroutable_nurse_days.csv` should be empty after every regular run.
 
-Tested end to end on a copy of the model:
-
-- Assignment still solves to optimal (objective 360.21 → 366.51).
-- Layer 2 routes all 50 nurse-days and all 203 visits, with at least 3.2 minutes to spare on every route.
-- The trade-off is slightly less continuity: 12 patients see more than one nurse instead of 8.
-
-The fix uses one return trip as a stand-in for the real route, so it is not guaranteed for every future dataset. Layer 2's unroutable list stays the check that it held.
+**Assignment optimizes estimated miles, not real route miles.** Real route cost therefore varies by about $10–15 between runs that assignment rates almost equally, so small differences in the sweep are noise. The overall trends hold across all three roster sizes.
 
 **No time windows in the forecast data.** Every visit can happen any time during the shift, so the waiting-time analysis can't be shown on the forecast week. It runs automatically once windows are added to the appointments file.
