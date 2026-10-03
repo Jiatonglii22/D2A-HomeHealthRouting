@@ -1,0 +1,3 @@
+nurse_id,day,stops,patients,reason
+N008,Mon,6,"P000055, P000868, P000955, P001723, P002068, P002109",shift overrun: best ordering returns 7 min after shift end
+N006,Wed,7,"P000156, P000627, P000854, P001340, P001617, P001637, P001949",shift overrun: best ordering returns 1 min after shift end
