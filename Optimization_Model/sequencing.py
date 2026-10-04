@@ -30,27 +30,26 @@ Run from the repo root, after main.py:  python -m Optimization_Model.sequencing
 import math
 from itertools import permutations
 from pathlib import Path
-
 import pandas as pd
 
-ASSIGNMENTS = Path('./Outputs/nurse_daily_assignments.csv')
-APPOINTMENTS = Path('./Datasets/Processed/synthetic_appointments_397636.csv')
-TRAVEL = Path('./Datasets/Processed/travel_car.csv')
-SHIFTS = Path('./Datasets/Forecast/nurse_availability.csv')
-OUTPUT_DIR = Path('./Outputs')
+DATA_DIR = './Datasets/Forecast/'
+OUTPUT_DIR = './Outputs/'
 
-DAYS = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri'] # same labels as model.py
+ASSIGNMENTS = Path(OUTPUT_DIR + 'nurse_daily_assignments.csv')
+APPOINTMENTS = Path(DATA_DIR + 'patient_appointments.csv')
+SHIFTS = Path(DATA_DIR + 'nurse_availability.csv')
+TRAVEL = Path('./Datasets/Processed/travel_car.csv')
+
+DAYS = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri'] 
 DAY_MAP = {'Monday': 'Mon', 'Tuesday': 'Tues', 'Wednesday': 'Wed', 'Thursday': 'Thurs', 'Friday': 'Fri'}
 
-COST_PER_MILE = 0.235 # keep in sync with cpg in model.py
-MAX_EXACT_STOPS = 8 # 8! = 40,320 orderings; 9! = 362,880
-
-
-# ---------------------------------------------------------------- inputs
+COST_PER_MILE = 0.235 
+MAX_EXACT_STOPS = 8 
 
 def time_to_minutes(time_value):
     if pd.isna(time_value):
         return None
+    
     hours, minutes = map(int, str(time_value).split(':'))
     return (hours * 60) + minutes
 
@@ -61,9 +60,9 @@ def minutes_to_time(minutes):
 
 
 def load_assignments(path=ASSIGNMENTS):
-    """{(nurse, day): [patient, ...]} from Layer 1's wide CSV (one column per day)."""
     wide = pd.read_csv(path)
     assigned = {}
+
     for _, row in wide.iterrows():
         for day in DAYS:
             cell = row.get(day)
@@ -74,49 +73,44 @@ def load_assignments(path=ASSIGNMENTS):
 
 
 def load_appointments(path=APPOINTMENTS):
-    """Per (patient, day): appointment id, visit length, and arrival window.
-
-    Keyed on (patient, day), not patient: a patient can need 30 minutes on Monday and 60 on Wednesday.
-    The forecast has no time windows; if tw_start / tw_end columns are added later they are used,
-    otherwise the window is left open (None) and only the shift limits the visit.
-    """
     appts = pd.read_csv(path)
     appts['day'] = appts['day'].map(DAY_MAP).fillna(appts['day'])
-    has_windows = {'tw_start', 'tw_end'} <= set(appts.columns)
 
     visits = {}
     for row in appts.itertuples(index=False):
         visits[(row.patient_id, row.day)] = {
             'appointment_id': row.appointment_id,
-            'service': float(row.service_time_minutes),
-            'tw_start': time_to_minutes(row.tw_start) if has_windows else None,
-            'tw_end': time_to_minutes(row.tw_end) if has_windows else None,
+            'service': float(row.service_time)
         }
+
     return visits
 
 
 def load_travel(path=TRAVEL):
-    """travel_min[a][b], miles[a][b] for every ordered pair (Agency, nurse homes, patients)."""
     travel = pd.read_csv(path)
     travel_min, miles = {}, {}
+
     for row in travel.itertuples(index=False):
         travel_min.setdefault(row.origin, {})[row.destination] = float(row.travel_minutes)
         miles.setdefault(row.origin, {})[row.destination] = float(row.distance_miles)
+
     return travel_min, miles
 
 
 def load_shifts(path=SHIFTS):
-    """{(nurse, day): (start_minute, end_minute)} for working days only."""
     avail = pd.read_csv(path)
-    return {
-        (row.nurse_id, row.day): (time_to_minutes(row.start_time), time_to_minutes(row.end_time))
-        for row in avail.itertuples(index=False)
-        if row.available == 1
-    }
+    shifts = {} 
+
+    for row in avail.itertuples(index=False):
+        shifts[(row.nurse_id, row.day)] = {
+            'start_time': row.start_time, 
+            'end_time': row.end_time
+        }
+
+    return shifts
 
 
-# ---------------------------------------------------------------- routing
-
+# routing 
 def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles, best_miles=math.inf, keep_stops=False):
     """Drive one ordering and report what happens.
 
@@ -226,15 +220,10 @@ def heuristic_route(patients, day, depot, shift_start, shift_end, visits, travel
         return None, f'shift overrun: best ordering found returns {best_score[1]:.0f} min after shift end (heuristic)'
     return None, 'window missed: no ordering found reaches every visit in time (heuristic)'
 
-
+# route each nurse shift 
+# depot = None default value assumes nurse begins and ends the route at their home 
+#       = 'Agency' assumes nurse begins and ends routes from the Agency 
 def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
-    """Route every nurse-day.
-
-    depot=None starts and ends each route at the nurse's home (the cost basis Layer 1 uses);
-    depot='Agency' starts and ends every route at the agency instead, for comparison.
-
-    Returns (schedule, summary, unroutable) DataFrames.
-    """
     schedule_rows, summary_rows, unroutable_rows = [], [], []
 
     for (nurse, day), patients in sorted(assigned.items(), key=lambda k: (DAYS.index(k[0][1]), k[0][0])):
@@ -288,17 +277,18 @@ def check_coverage(assigned, visits, schedule, unroutable):
     assert routed + reported == len(assigned_visits), f'{routed} routed + {reported} unroutable != {len(assigned_visits)} assigned'
 
 
-# ---------------------------------------------------------------- main
-
-def main():
+def sequence_main():
+    # load inputs 
     assigned = load_assignments()
     visits = load_appointments()
     travel_min, miles = load_travel()
     shifts = load_shifts()
 
+    # generate schedule + verify output 
     schedule, summary, unroutable = run_sequencing(assigned, visits, travel_min, miles, shifts)
     check_coverage(assigned, visits, schedule, unroutable)
 
+    # output to files 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     schedule.to_csv(OUTPUT_DIR / 'route_schedule.csv', index=False)
     for day in DAYS:
@@ -311,9 +301,5 @@ def main():
     print(f"Total: {summary['route_miles'].sum():.1f} miles, ${summary['route_cost'].sum():.2f}, "
           f"{summary['route_drive_minutes'].sum():.0f} drive min, {summary['route_wait_minutes'].sum():.0f} wait min")
     if len(unroutable):
-        print(f'\n{len(unroutable)} unroutable nurse-days (Layer 1 gave a caseload that cannot be driven inside the shift):')
+        print(f'\n{len(unroutable)} unroutable nurse-days:')
         print(unroutable[['nurse_id', 'day', 'stops', 'reason']].to_string(index=False))
-
-
-if __name__ == '__main__':
-    main()

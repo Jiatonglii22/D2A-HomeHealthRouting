@@ -1,6 +1,7 @@
 import pandas as pd 
 from pathlib import Path 
 from Optimization_Model.model import build_model 
+from Optimization_Model.sequencing import sequence_main 
 
 DATA_DIR = './Datasets/Forecast/' # or './Datasets/Dummy/' (regenerate travel_car.csv to match) 
 
@@ -69,3 +70,6 @@ for patient, nurses in patient_nurses.items():
 
 continuity_df = pd.DataFrame(continuity_rows) 
 continuity_df.to_csv(output_dir/'patient_continuity.csv', index=False)
+
+# sequencing main method 
+sequence_main() 
