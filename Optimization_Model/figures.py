@@ -5,6 +5,7 @@ Presentation figures, built from the CSVs the pipeline saves (no re-solving).
   cost_by_roster         weekly route cost per roster size: lowest-cost schedule vs full continuity
   nurse_time_breakdown   how each nurse's week splits into visits, driving and spare shift time
   route_map_<day>        each nurse's route that day, one small map per nurse
+  route_map_all_<day>    every nurse's route that day on one map, one colour per nurse, over a street basemap
 
 Each figure is saved to Outputs/figures/ as a 300 dpi PNG (slides, print) and an SVG (scales to any size).
 
@@ -13,6 +14,10 @@ Inputs
   Outputs/route_summary.csv, route_schedule.csv    from Optimization_Model/sequencing.py
   Datasets/Processed/synthetic_patients_397636.csv patient locations
   Datasets/Forecast/nurses.csv                     nurse home locations (the synthetic roster; not in Processed)
+  Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp   ZIP outlines for route_map_all (needs geopandas)
+
+route_map_all draws street tiles with contextily (downloads tiles, needs internet). Without contextily or a
+connection it falls back to the ZIP outlines alone.
 
 Run from the repo root, after main.py, sequencing and the sweep:  python -m Optimization_Model.figures
 """
@@ -20,18 +25,21 @@ Run from the repo root, after main.py, sequencing and the sweep:  python -m Opti
 import math
 from pathlib import Path
 
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.lines import Line2D
 
 from Optimization_Model import sequencing as seq
 
-OUTPUT_DIR = seq.OUTPUT_DIR
+OUTPUT_DIR = Path(seq.OUTPUT_DIR)
 FIGURES_DIR = OUTPUT_DIR / 'figures'
 SWEEP = OUTPUT_DIR / 'staffing_sweep.csv'
 ROUTE_SUMMARY = OUTPUT_DIR / 'route_summary.csv'
 ROUTE_SCHEDULE = OUTPUT_DIR / 'route_schedule.csv'
 PATIENTS = Path('./Datasets/Processed/synthetic_patients_397636.csv')
 NURSES = Path('./Datasets/Forecast/nurses.csv')
+ZIP_BOUNDARIES = Path('./Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp')
 
 LOWEST_COST_W_C = 0 # sweep weight for "ignore continuity"
 FULL_CONTINUITY_W_C = 500 # sweep weight that forces one nurse per patient
@@ -45,6 +53,9 @@ BLUE = '#2a78d6' # series 1
 ORANGE = '#eb6834' # series 2
 SPARE = '#d9d8d3' # remainder / context, deliberately recessive
 ROSTER_COLORS = ['#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'] # one blue, light -> dark with roster size
+# categorical hues in fixed order (blue, orange, aqua, yellow, magenta, green, violet, red); nurses past the
+# 8th reuse them with a dashed line, so no two nurses share colour AND line style
+NURSE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948']
 
 
 def style(ax, title, xlabel=None, ylabel=None):
@@ -252,6 +263,108 @@ def plot_route_maps(summary, schedule, patients, nurses):
         save(fig, f'route_map_{day}')
 
 
+def web_mercator(lat, lon):
+    """Lat/lon (degrees) to Web Mercator metres (EPSG:3857), the projection street tiles are drawn in."""
+    r = 6378137.0
+    x = lon.map(lambda v: r * math.radians(v))
+    y = lat.map(lambda v: r * math.log(math.tan(math.pi / 4 + math.radians(v) / 2)))
+    return x, y
+
+
+def draw_background(ax):
+    """Street tiles if contextily can fetch them, plus ZIP outlines if geopandas is installed.
+
+    Returns the attribution the tiles require, or None if no tiles were drawn.
+    """
+    try:
+        import geopandas as gpd
+        zips = gpd.read_file(ZIP_BOUNDARIES).to_crs(epsg=3857)
+        zips.boundary.plot(ax=ax, color=AXIS, linewidth=0.5, zorder=1)
+    except Exception as e: # optional layer
+        print(f'  (no ZIP outlines: {e})')
+
+    try:
+        import contextily as ctx
+        ctx.add_basemap(ax, crs='EPSG:3857', source=ctx.providers.Esri.WorldGrayCanvas, attribution=False, zorder=0)
+        return 'Basemap: Esri, HERE, Garmin, (c) OpenStreetMap contributors'
+    except Exception as e: # no contextily, or no connection
+        print(f'  (no street basemap: {e})')
+        return None
+
+
+def plot_route_map_all(summary, schedule, patients, nurses):
+    """One figure per day: every nurse's route on one map, one colour per nurse, visits numbered in order.
+
+    A nurse keeps the same colour on every day (colour follows the nurse, not who happens to work).
+    """
+    roster = sorted(nurses['nurse_id'])
+    color = {n: NURSE_COLORS[k % len(NURSE_COLORS)] for k, n in enumerate(roster)}
+    dashes = {n: '-' if k < len(NURSE_COLORS) else '--' for k, n in enumerate(roster)}
+    marker = {n: 'o' if k < len(NURSE_COLORS) else 'D' for k, n in enumerate(roster)} # second cycle: diamonds too
+
+    home = nurses.set_index('nurse_id')[['lat', 'lon']]
+    home['x'], home['y'] = web_mercator(home['lat'], home['lon'])
+    loc = patients.set_index('patient_id')[['latitude', 'longitude']]
+    loc['x'], loc['y'] = web_mercator(loc['latitude'], loc['longitude'])
+
+    # same extent every day, so the five maps line up
+    xs, ys = pd.concat([loc['x'], home['x']]), pd.concat([loc['y'], home['y']])
+    pad = 0.04 * max(xs.max() - xs.min(), ys.max() - ys.min())
+    xlim, ylim = (xs.min() - pad, xs.max() + pad), (ys.min() - pad, ys.max() + pad)
+    halo = [pe.withStroke(linewidth=2.5, foreground='white')]
+
+    for day in seq.DAYS:
+        routes = summary[summary['day'] == day].sort_values('nurse_id')
+        if routes.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(14, 11 * (ylim[1] - ylim[0]) / (xlim[1] - xlim[0]))) # extra width: legend
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_aspect('equal')
+        attribution = draw_background(ax)
+
+        handles = []
+        for route in routes.itertuples():
+            n, c = route.nurse_id, color[route.nurse_id]
+            stops = schedule[(schedule['nurse_id'] == n) & (schedule['day'] == day)].sort_values('stop')
+            path = pd.concat([home.loc[[n], ['x', 'y']], loc.loc[stops['patient_id'], ['x', 'y']],
+                              home.loc[[n], ['x', 'y']]])
+
+            ax.plot(path['x'], path['y'], color=c, linestyle=dashes[n], linewidth=2, zorder=3,
+                    path_effects=[pe.withStroke(linewidth=3.5, foreground='white')])
+            ax.scatter(path['x'].iloc[1:-1], path['y'].iloc[1:-1], s=90, marker=marker[n], color=c, edgecolors='white',
+                       linewidths=1.5, zorder=4)
+            for k, (x, y) in enumerate(zip(path['x'].iloc[1:-1], path['y'].iloc[1:-1]), start=1):
+                ax.text(x, y, str(k), ha='center', va='center', fontsize=6.5, fontweight='bold',
+                        color='white', zorder=5, path_effects=[pe.withStroke(linewidth=1.2, foreground=c)])
+            ax.scatter(path['x'].iloc[0], path['y'].iloc[0], s=110, marker='s', color=c, edgecolors=INK,
+                       linewidths=1.2, zorder=6)
+            ax.annotate(n, (path['x'].iloc[0], path['y'].iloc[0]), xytext=(7, 5), textcoords='offset points',
+                        fontsize=8, fontweight='bold', color=INK, zorder=7, path_effects=halo)
+
+            visits = f"{route.stops} visit{'s' if route.stops != 1 else ''}"
+            handles.append(Line2D([], [], color=c, linestyle=dashes[n], linewidth=2, marker=marker[n], markersize=7,
+                                  markeredgecolor='white', label=f'{n}: {visits}, {route.route_miles:.0f} mi'))
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        for spine in ax.spines.values():
+            spine.set_color(AXIS)
+        ax.legend(handles=handles, title='Nurse', loc='upper left', bbox_to_anchor=(1.01, 1), frameon=False,
+                  fontsize=9, title_fontsize=10, labelcolor=INK)
+        ax.set_title(f'{day}: all nurse routes ({len(routes)} nurses, {routes["stops"].sum()} visits, '
+                     f'{routes["route_miles"].sum():.0f} mi)', loc='left', color=INK, fontsize=13)
+        note = ('Square: nurse home (start and end). Numbered markers: visits in order. '
+                'Lines join stops directly; they are not the road path.')
+        if attribution:
+            note += f'  {attribution}'
+        fig.text(0.01, 0.01, note, fontsize=8, color=INK_2)
+        fig.tight_layout(rect=(0, 0.025, 1, 1))
+        save(fig, f'route_map_all_{day}')
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -266,7 +379,9 @@ def main():
     summary = pd.read_csv(ROUTE_SUMMARY)
     schedule = pd.read_csv(ROUTE_SCHEDULE)
     plot_nurse_time_breakdown(summary)
-    plot_route_maps(summary, schedule, pd.read_csv(PATIENTS), pd.read_csv(NURSES))
+    patients, nurses = pd.read_csv(PATIENTS), pd.read_csv(NURSES)
+    plot_route_maps(summary, schedule, patients, nurses)
+    plot_route_map_all(summary, schedule, patients, nurses)
 
 
 if __name__ == '__main__':

@@ -17,4 +17,5 @@ requests==2.34.2       # Datasets/osrm_travel_matrix.py
 
 # analysis.ipynb
 matplotlib==3.11.2
+contextily==1.7.1     # street basemap in Optimization_Model/figures.py route_map_all (optional; downloads tiles)
 ipykernel==7.4.0
