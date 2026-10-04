@@ -7,8 +7,6 @@ visit order and timetable for every nurse-day:
   - above that: nearest neighbour, then 2-opt improvement (heuristic)
 
 Feasibility, checked for every ordering:
-  - arriving before a visit's window opens means waiting, not starting early
-  - a visit must start no later than its window closes
   - the nurse must be back home by the end of her shift
 
 Inputs
@@ -114,12 +112,11 @@ def load_shifts(path=SHIFTS):
 def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles, best_miles=math.inf, keep_stops=False):
     """Drive one ordering and report what happens.
 
-    Returns a dict with status ('ok', 'window', 'overrun', 'pruned'), miles, drive/wait minutes,
-    return time, and (if keep_stops) one record per stop. Stops early once the window is missed
-    or the running miles reach best_miles (that ordering can't win).
+    Returns a dict with status ('ok', 'overrun', 'pruned'), miles, drive minutes,
+    return time, and (if keep_stops) one record per stop. Stops early once running miles reach best_miles (that ordering can't win).
     """
     t, loc = shift_start, depot
-    total_miles = drive = wait = 0.0
+    total_miles = drive = 0.0
     stops = []
 
     for p in order:
@@ -132,16 +129,10 @@ def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, mile
             return {'status': 'pruned'}
 
         arrive = t
-        if visit['tw_start'] is not None and t < visit['tw_start']: # wait if early
-            t = visit['tw_start']
-        if visit['tw_end'] is not None and t > visit['tw_end']: # window missed
-            return {'status': 'window', 'patient': p, 'late_by': t - visit['tw_end']}
-        wait += t - arrive
 
         if keep_stops:
             stops.append({'patient_id': p, 'appointment_id': visit['appointment_id'], 'arrive': arrive, 'start': t,
-                          'wait_min': t - arrive, 'end': t + visit['service'],
-                          'drive_min_from_prev': leg_min, 'miles_from_prev': leg_miles})
+                          'end': t + visit['service'], 'drive_min_from_prev': leg_min, 'miles_from_prev': leg_miles})
         t += visit['service'] # do the visit
         loc = p
 
@@ -149,7 +140,7 @@ def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, mile
     drive += travel_min[loc][depot]
     total_miles += miles[loc][depot]
 
-    result = {'miles': total_miles, 'drive_min': drive, 'wait_min': wait, 'return_time': t, 'stops': stops,
+    result = {'miles': total_miles, 'drive_min': drive, 'return_time': t, 'stops': stops,
               'overrun_by': t - shift_end}
     result['status'] = 'ok' if t <= shift_end else 'overrun' # shift overrun
     return result
@@ -158,10 +149,10 @@ def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, mile
 def best_route(patients, day, depot, shift_start, shift_end, visits, travel_min, miles):
     """Exact: try every ordering and keep the cheapest feasible one (by miles).
 
-    If none is feasible, return the reason from the closest attempt (smallest overrun, else a missed window).
+    If none is feasible, return the reason from the closest attempt (smallest overrun).
     """
     best_order, best_miles = None, math.inf
-    closest_overrun, missed_window = None, None
+    closest_overrun = None
 
     for order in permutations(patients):
         r = evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles, best_miles)
@@ -169,15 +160,11 @@ def best_route(patients, day, depot, shift_start, shift_end, visits, travel_min,
             best_order, best_miles = order, r['miles']
         elif r['status'] == 'overrun' and (closest_overrun is None or r['overrun_by'] < closest_overrun):
             closest_overrun = r['overrun_by']
-        elif r['status'] == 'window' and missed_window is None:
-            missed_window = r
 
     if best_order is not None:
         return best_order, None
     if closest_overrun is not None:
         return None, f'shift overrun: best ordering returns {closest_overrun:.0f} min after shift end'
-    return None, f"window missed: no ordering reaches every visit in time (e.g. {missed_window['patient']})"
-
 
 def heuristic_route(patients, day, depot, shift_start, shift_end, visits, travel_min, miles):
     """Above MAX_EXACT_STOPS: nearest neighbour by miles, then 2-opt.
@@ -218,7 +205,6 @@ def heuristic_route(patients, day, depot, shift_start, shift_end, visits, travel
         return tuple(best), None
     if best_score[0] == 1:
         return None, f'shift overrun: best ordering found returns {best_score[1]:.0f} min after shift end (heuristic)'
-    return None, 'window missed: no ordering found reaches every visit in time (heuristic)'
 
 # route each nurse shift 
 # depot = None default value assumes nurse begins and ends the route at their home 
@@ -227,7 +213,8 @@ def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
     schedule_rows, summary_rows, unroutable_rows = [], [], []
 
     for (nurse, day), patients in sorted(assigned.items(), key=lambda k: (DAYS.index(k[0][1]), k[0][0])):
-        start, end = shifts[(nurse, day)]
+        start = time_to_minutes(shifts[(nurse, day)]['start_time'])
+        end = time_to_minutes(shifts[(nurse, day)]['end_time'])
         origin = depot or nurse
         exact = len(patients) <= MAX_EXACT_STOPS
         router = best_route if exact else heuristic_route
@@ -244,7 +231,7 @@ def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
                 'nurse_id': nurse, 'day': day, 'stop': n,
                 'patient_id': stop['patient_id'], 'appointment_id': stop['appointment_id'],
                 'arrive': minutes_to_time(stop['arrive']), 'start': minutes_to_time(stop['start']),
-                'end': minutes_to_time(stop['end']), 'wait_min': round(stop['wait_min'], 1),
+                'end': minutes_to_time(stop['end']),
                 'drive_min_from_prev': round(stop['drive_min_from_prev'], 1),
                 'miles_from_prev': round(stop['miles_from_prev'], 2),
             })
@@ -253,7 +240,7 @@ def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
             'shift_start': minutes_to_time(start), 'shift_end': minutes_to_time(end),
             'return_time': minutes_to_time(r['return_time']), 'slack_min': round(end - r['return_time'], 1),
             'route_miles': round(r['miles'], 2), 'route_cost': round(r['miles'] * COST_PER_MILE, 2),
-            'route_drive_minutes': round(r['drive_min'], 1), 'route_wait_minutes': round(r['wait_min'], 1),
+            'route_drive_minutes': round(r['drive_min'], 1), 
             'route': ' > '.join([origin, *order, origin]),
         })
 
@@ -289,17 +276,17 @@ def sequence_main():
     check_coverage(assigned, visits, schedule, unroutable)
 
     # output to files 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    schedule.to_csv(OUTPUT_DIR / 'route_schedule.csv', index=False)
+    Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    schedule.to_csv(OUTPUT_DIR + 'route_schedule.csv', index=False)
     for day in DAYS:
-        schedule[schedule['day'] == day].to_csv(OUTPUT_DIR / f'route_schedule_{day}.csv', index=False)
-    summary.to_csv(OUTPUT_DIR / 'route_summary.csv', index=False)
-    unroutable.to_csv(OUTPUT_DIR / 'unroutable_nurse_days.csv', index=False)
+        schedule[schedule['day'] == day].to_csv(OUTPUT_DIR + f'route_schedule_{day}.csv', index=False)
+    summary.to_csv(OUTPUT_DIR + 'route_summary.csv', index=False)
+    unroutable.to_csv(OUTPUT_DIR + 'unroutable_nurse_days.csv', index=False)
 
     print(f"Routed {len(summary)} nurse-days ({(summary['method'] == 'heuristic').sum()} heuristic), "
           f"{len(schedule)} visits")
     print(f"Total: {summary['route_miles'].sum():.1f} miles, ${summary['route_cost'].sum():.2f}, "
-          f"{summary['route_drive_minutes'].sum():.0f} drive min, {summary['route_wait_minutes'].sum():.0f} wait min")
+          f"{summary['route_drive_minutes'].sum():.0f} drive min")
     if len(unroutable):
         print(f'\n{len(unroutable)} unroutable nurse-days:')
         print(unroutable[['nurse_id', 'day', 'stops', 'reason']].to_string(index=False))
