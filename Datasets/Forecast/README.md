@@ -5,9 +5,9 @@ One-week (Mon–Fri) input for the assignment model, built from the forecast dem
 ## Pipeline
 
 ```
-python Prediction_Model/12_synthetic_patient_data.py   # forecast -> Processed/synthetic_*_397636.csv
-python Datasets/prepare_forecast_data.py               # -> Datasets/Forecast/*.csv
-python Datasets/osrm_travel_matrix.py                  # -> Processed/travel_car.csv (needs internet)
+python Prediction_Model/08_synthetic_patient_data.py   # forecast -> Processed/synthetic_*_397636.csv
+python Prediction_Model/09_prepare_forecast_data.py               # -> Datasets/Forecast/*.csv
+python DPrediction_Model/10_osrm_travel_matrix.py                  # -> Processed/travel_car.csv (needs internet)
 python main.py                                         # -> Outputs/
 ```
 
