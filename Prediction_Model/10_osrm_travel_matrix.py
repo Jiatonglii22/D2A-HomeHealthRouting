@@ -21,8 +21,8 @@ from pathlib import Path
 # Coordinates are (latitude, longitude) here -- the script flips them for OSRM.
 # ---------------------------------------------------------------------------
 DEPOT = ("Agency", 40.6847801208496, -80.0629425048828)
-DEFAULT_DATA_DIR = Path(__file__).parent / "Forecast"
-OUTPUT_PATH = Path(__file__).parent / "Processed" / "travel_car.csv"
+DEFAULT_DATA_DIR = Path("Datasets") / "Forecast"
+OUTPUT_PATH = Path("Datasets") / "Processed" / "travel_car.csv"
 
 OSRM_URL = "http://router.project-osrm.org/table/v1/driving/"
 MAX_COORDS_PER_REQUEST = 100   # demo server rejects larger tables with "TooBig"

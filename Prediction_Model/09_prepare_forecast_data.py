@@ -26,7 +26,7 @@ import pandas as pd
 SEED = 42
 AGENCY_ID = "397636"
 
-HERE = Path(__file__).parent
+HERE = Path("Datasets")
 PATIENTS_IN = HERE / "Processed" / f"synthetic_patients_{AGENCY_ID}.csv"
 APPOINTMENTS_IN = HERE / "Processed" / f"synthetic_appointments_{AGENCY_ID}.csv"
 OUT_DIR = HERE / "Forecast"
@@ -60,7 +60,6 @@ def load_patients():
         "lat": p["latitude"].round(6),
         "lon": p["longitude"].round(6),
         "visits_per_week": p["weekly_visits"],
-        "annual_episodes": p["annual_episodes"],
     })
 
 
