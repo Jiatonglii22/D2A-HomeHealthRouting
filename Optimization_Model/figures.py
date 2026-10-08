@@ -367,7 +367,7 @@ def plot_route_map_all(summary, schedule, patients, nurses):
 
 # ---------------------------------------------------------------- main
 
-def main():
+def output_figures_main():
     print('Saving figures to', FIGURES_DIR)
     if SWEEP.exists():
         sweep = pd.read_csv(SWEEP)
@@ -382,7 +382,3 @@ def main():
     patients, nurses = pd.read_csv(PATIENTS), pd.read_csv(NURSES)
     plot_route_maps(summary, schedule, patients, nurses)
     plot_route_map_all(summary, schedule, patients, nurses)
-
-
-if __name__ == '__main__':
-    main()

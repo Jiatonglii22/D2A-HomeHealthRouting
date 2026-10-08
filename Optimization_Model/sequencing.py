@@ -1,35 +1,9 @@
-"""
-Layer 2 - Sequencing.
-
-Takes Layer 1's nurse-day assignments (Outputs/nurse_daily_assignments.csv) and finds the
-visit order and timetable for every nurse-day:
-  - up to MAX_EXACT_STOPS stops: try every ordering (exact)
-  - above that: nearest neighbour, then 2-opt improvement (heuristic)
-
-Feasibility, checked for every ordering:
-  - the nurse must be back home by the end of her shift
-
-Inputs
-  Outputs/nurse_daily_assignments.csv                    Layer 1 output (which nurse sees whom, each day)
-  Datasets/Processed/synthetic_appointments_397636.csv   visit length per (patient, day)
-  Datasets/Processed/travel_car.csv                      travel minutes / miles between every pair of locations
-  Datasets/Forecast/nurse_availability.csv               shifts (the same shifts Layer 1 solved with;
-                                                         no shift data exists in Processed)
-
-Outputs (in Outputs/)
-  route_schedule.csv            one row per stop
-  route_schedule_<day>.csv      the same, one file per day
-  route_summary.csv             one row per nurse-day
-  unroutable_nurse_days.csv     nurse-days with no feasible ordering, and why
-
-Run from the repo root, after main.py:  python -m Optimization_Model.sequencing
-"""
-
 import math
 from itertools import permutations
 from pathlib import Path
 import pandas as pd
 
+# input and output path definitions 
 DATA_DIR = './Datasets/Forecast/'
 OUTPUT_DIR = './Outputs/'
 
@@ -44,6 +18,7 @@ DAY_MAP = {'Monday': 'Mon', 'Tuesday': 'Tues', 'Wednesday': 'Wed', 'Thursday': '
 COST_PER_MILE = 0.235 
 MAX_EXACT_STOPS = 8 
 
+# converts a given time to minutes 
 def time_to_minutes(time_value):
     if pd.isna(time_value):
         return None
@@ -51,12 +26,12 @@ def time_to_minutes(time_value):
     hours, minutes = map(int, str(time_value).split(':'))
     return (hours * 60) + minutes
 
-
+# converts a given number of minutes to a time 
 def minutes_to_time(minutes):
     minutes = int(round(minutes))
     return f'{minutes // 60}:{minutes % 60:02d}'
 
-
+# load the assignment output from the assignment optimization model 
 def load_assignments(path=ASSIGNMENTS):
     wide = pd.read_csv(path)
     assigned = {}
@@ -69,7 +44,7 @@ def load_assignments(path=ASSIGNMENTS):
             assigned[(row['Nurse_ID'], day)] = [p.strip() for p in str(cell).split(',') if p.strip()]
     return assigned
 
-
+# load the patient appointment data 
 def load_appointments(path=APPOINTMENTS):
     appts = pd.read_csv(path)
     appts['day'] = appts['day'].map(DAY_MAP).fillna(appts['day'])
@@ -83,7 +58,7 @@ def load_appointments(path=APPOINTMENTS):
 
     return visits
 
-
+# load the distance matrix 
 def load_travel(path=TRAVEL):
     travel = pd.read_csv(path)
     travel_min, miles = {}, {}
@@ -94,7 +69,7 @@ def load_travel(path=TRAVEL):
 
     return travel_min, miles
 
-
+# load nurse availability and shift times 
 def load_shifts(path=SHIFTS):
     avail = pd.read_csv(path)
     shifts = {} 
@@ -108,13 +83,8 @@ def load_shifts(path=SHIFTS):
     return shifts
 
 
-# routing 
+# try one ordering of routes and report whether it was successful or improved on from the previous ordering in terms of driving distance and time 
 def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles, best_miles=math.inf, keep_stops=False):
-    """Drive one ordering and report what happens.
-
-    Returns a dict with status ('ok', 'overrun', 'pruned'), miles, drive minutes,
-    return time, and (if keep_stops) one record per stop. Stops early once running miles reach best_miles (that ordering can't win).
-    """
     t, loc = shift_start, depot
     total_miles = drive = 0.0
     stops = []
@@ -130,13 +100,15 @@ def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, mile
 
         arrive = t
 
+        # record stop information 
         if keep_stops:
             stops.append({'patient_id': p, 'appointment_id': visit['appointment_id'], 'arrive': arrive, 'start': t,
                           'end': t + visit['service'], 'drive_min_from_prev': leg_min, 'miles_from_prev': leg_miles})
         t += visit['service'] # do the visit
-        loc = p
+        loc = p # update location to current stop 
 
     t += travel_min[loc][depot] # drive home
+    # keep track of total travel time and miles 
     drive += travel_min[loc][depot]
     total_miles += miles[loc][depot]
 
@@ -145,33 +117,29 @@ def evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, mile
     result['status'] = 'ok' if t <= shift_end else 'overrun' # shift overrun
     return result
 
-
+# try every ordering and keep the cheapest and most feasible route (by miles) 
+# if no ordering is feasible, return the one with the smallest overrun shift time 
 def best_route(patients, day, depot, shift_start, shift_end, visits, travel_min, miles):
-    """Exact: try every ordering and keep the cheapest feasible one (by miles).
-
-    If none is feasible, return the reason from the closest attempt (smallest overrun).
-    """
     best_order, best_miles = None, math.inf
     closest_overrun = None
 
+    # try each order and keep the best one 
     for order in permutations(patients):
         r = evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles, best_miles)
-        if r['status'] == 'ok' and r['miles'] < best_miles: # pruning skips the drive home, so compare full miles
+        if r['status'] == 'ok' and r['miles'] < best_miles: 
             best_order, best_miles = order, r['miles']
         elif r['status'] == 'overrun' and (closest_overrun is None or r['overrun_by'] < closest_overrun):
             closest_overrun = r['overrun_by']
 
+    # return ordering 
     if best_order is not None:
         return best_order, None
     if closest_overrun is not None:
         return None, f'shift overrun: best ordering returns {closest_overrun:.0f} min after shift end'
 
+# if the number of patients will go over a nurse's shift, find the best one and choose the one with the least violation 
 def heuristic_route(patients, day, depot, shift_start, shift_end, visits, travel_min, miles):
-    """Above MAX_EXACT_STOPS: nearest neighbour by miles, then 2-opt.
-
-    Orderings are compared feasible-first, then by size of violation, then by miles, using the same
-    evaluate() as the exact search so the two can never disagree about feasibility.
-    """
+    
     def score(order):
         r = evaluate(order, day, depot, shift_start, shift_end, visits, travel_min, miles)
         if r['status'] == 'ok':
@@ -212,6 +180,7 @@ def heuristic_route(patients, day, depot, shift_start, shift_end, visits, travel
 def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
     schedule_rows, summary_rows, unroutable_rows = [], [], []
 
+    # for each day, for each nurse, find the most optimal route 
     for (nurse, day), patients in sorted(assigned.items(), key=lambda k: (DAYS.index(k[0][1]), k[0][0])):
         start = time_to_minutes(shifts[(nurse, day)]['start_time'])
         end = time_to_minutes(shifts[(nurse, day)]['end_time'])
@@ -226,6 +195,7 @@ def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
             continue
 
         r = evaluate(order, day, origin, start, end, visits, travel_min, miles, keep_stops=True)
+        # record data about best route 
         for n, stop in enumerate(r['stops'], start=1):
             schedule_rows.append({
                 'nurse_id': nurse, 'day': day, 'stop': n,
@@ -249,9 +219,9 @@ def run_sequencing(assigned, visits, travel_min, miles, shifts, depot=None):
     unroutable = pd.DataFrame(unroutable_rows, columns=['nurse_id', 'day', 'stops', 'patients', 'reason'])
     return schedule, summary, unroutable
 
-
+# ensure that every patient appointment has been assigned once (covered by assignment model) 
+# every assigned visit should be included in a route 
 def check_coverage(assigned, visits, schedule, unroutable):
-    """Every appointment is assigned exactly once, and every assigned visit is routed or reported."""
     assigned_visits = [(p, day) for (_, day), patients in assigned.items() for p in patients]
     missing = set(visits) - set(assigned_visits)
     unknown = set(assigned_visits) - set(visits)

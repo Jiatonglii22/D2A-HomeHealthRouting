@@ -2,8 +2,10 @@ import pandas as pd
 from pathlib import Path 
 from Optimization_Model.model import build_model 
 from Optimization_Model.sequencing import sequence_main 
+from Optimization_Model.sweep import sweep_main 
+from Optimization_Model.figures import output_figures_main
 
-DATA_DIR = './Datasets/Forecast/' # or './Datasets/Dummy/' (regenerate travel_car.csv to match) 
+DATA_DIR = './Datasets/Forecast/' 
 
 patients_df = pd.read_csv(DATA_DIR + 'patient_appointments.csv')
 nurses_df = pd.read_csv(DATA_DIR + 'nurse_availability.csv')
@@ -73,3 +75,9 @@ continuity_df.to_csv(output_dir/'patient_continuity.csv', index=False)
 
 # sequencing main method 
 sequence_main() 
+
+# run sensitivity analysis() 
+sweep_main() 
+
+# output figures 
+output_figures_main() 

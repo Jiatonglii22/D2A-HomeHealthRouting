@@ -1,31 +1,46 @@
 # D2A-HomeHealthRouting
+### Team Members: 
+- Imama Zahoor 
+- Jiatong Li 
+- Esha Pandya 
+- Vidhi Kothari 
 
-## Changelog
+*Decision question: For a home health agency serving Allegheny County, PA, how should weekly patient visits be assigned and sequenced across nurses, how many nurses of each skill type are required, and what is the operational cost of guaranteeing continuity of care?* 
 
-Newest first. Each entry lists what changed, where, and what it means for anyone pulling.
+## File Structure 
+- Datasets: raw, forecasted, and processed datasets 
+    - Processed datasets are ready to use as inputs 
+- Optimization_Model: assignment and sequencing model 
+    - Conducts sensitivity analysis and outputs results 
+- Outputs: contains all outputs from optimization_model 
+    - patient-nurse assignments per day 
+    - daily and weekly schedules for each nurse 
+    - route figures 
+- Prediction_Model: uses existing data to perform demand allocation of patient appointments and locations 
 
-### 2026-10-03: drive-home fix, staffing sweep, presentation figures (vidhi-ds-24)
+## Setup: 
+- Requires a Python version of 3.10 or higher 
+- Download and unzip repository folder 
+- Open a terminal in the main folder 
+- Set up a virtual environment 
+    - `python -m venv .venv` 
+- Start virtual environment 
+    - `source .venv/bin/activate` 
+- Install required libraries 
+    - `pip install -r requirements.txt` 
 
-**Note: this changes assignment results.** The updated `Outputs/` are included, so there's nothing to re-run after pulling. Anything you built on the old outputs (notebooks, slides) may need refreshing.
+## Running the Models: 
+- Run `main.py` 
+    - `python main.py` 
 
-| Change | Files | Why / effect |
-|---|---|---|
-| **Changed:** assignment budgets the drive home | `Optimization_Model/model.py` | New variable `home[i,d]` (drive home from the farthest patient that day) added to `hours_worked`. Agreed with the team: the old budget left out the drive home, so 2 nurse-days couldn't be driven. Now all 50 nurse-days and 203 visits route. Objective 360.21 → 366.51; patients seeing more than one nurse 8 → 12 at `w_c = 0.5`. |
-| **Changed:** travel times read as decimals | `Optimization_Model/model.py` line 60 | `int(row['travel_minutes'])` → `float(...)`. `int` dropped the fraction of every travel time. |
-| **Regenerated:** all outputs | `Outputs/nurse_daily_assignments.csv`, `patient_continuity.csv`, `route_*.csv`, `unroutable_nurse_days.csv` | Re-run with the fixed model; `unroutable_nurse_days.csv` is now empty. |
-| **New:** staffing sweep | `Optimization_Model/sweep.py`, `Outputs/staffing_sweep.csv` | 5 roster sizes × 5 random rosters × 9 continuity weights, each scored on real routes. See [Staffing sweep](#staffing-sweep). |
-| **New:** presentation figures | `Optimization_Model/figures.py`, `Outputs/figures/` | Continuity-cost curve, cost by roster size, nurse time breakdown, daily route maps; 300 dpi PNG + SVG. See [Figures](#figures). |
-| **README** | this file | Added this changelog and the [Staffing sweep](#staffing-sweep) and [Figures](#figures) sections. Updated [Pipeline](#pipeline) (new commands, assignment now includes the drive home), [Current results](#current-results-forecast-week-11-nurses-w_c--05) and [Limitations](#limitations) (fix adopted; what remains). |
-
-### 2026-10-03: sequencing (Layer 2) and setup (vidhi-ds-24)
-
-Commits `34206a6`, `144e0c8`, `c3dc88a`. No change to existing code.
-
-| Change | Files | Why / effect |
-|---|---|---|
-| **New:** sequencing | `Optimization_Model/sequencing.py`, `Outputs/route_*.csv`, `Outputs/unroutable_nurse_days.csv` | Orders each nurse-day's visits into a drivable route, reading the assignment output. See [Sequencing](#sequencing-layer-2). |
-| **New:** dependencies | `requirements.txt` | Pinned packages for all models, tested on Python 3.12. See [Setup](#setup). |
-| **README** | this file | Added [Setup](#setup), [Pipeline](#pipeline), [Sequencing](#sequencing-layer-2) and [Limitations](#limitations). The `#Prediction Model:` heading was reformatted to `## Prediction Model` so it renders as a heading; its text is unchanged. |
+## Outputs: 
+- Navigate to `Outputs/` folder 
+    - `nurse_daily_assignments.csv`: This csv contains the outputs of the assignment model. With columns as the day of the week and the row representing each nurse, each cell lists the IDs of the patients assigned to that nurse. It is the user readable output of the x_{ijd} binary decision variable. 
+    - `route_schedule.csv`: This csv contains the output of the sequencing layer. Each row contains one stop in a nurse's stop, including the patient ID, patient appointment ID, day of the week, order in the stops, start and stop time of appointment, and drive time and mileage from the previous stop. 
+    - `route_schedule_<day>.csv`: One csv per day is created in a similar format as the weekly schedule. 
+    - `route_summary.csv`: This csv contains one row per nurse per day, with a list of patient IDs to easily extract the route. 
+    - `unroutable_nurse_days.csv`: This csv will be populated if the sequencing model is unable to find a feasible route restricted to the nurse's shift hours. In an ideal situation, this file will be unpopulated. 
+    - `staffing_sweep.csv`: This file contains the results of our sensitivty analysis, containing one row per combination of staff size and continuity of care weight. 
 
 ## Prediction Model
 
@@ -33,29 +48,12 @@ Agency-level demand allocation model is used to estimate agency-specific demand 
 
 We're using UPMC Home Health Agency in Greater Pittsburgh Region as the agency we are allocating demand for in its serviced zip codes.
 
-## Setup
-
-Python 3.10 or newer (tested on 3.12). Assignment needs a Gurobi license for models over 2,000 variables; the current forecast week is about 6,600.
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
 ## Pipeline
 
 The optimization runs in two layers:
 
 1. **Assignment (Layer 1)**, `Optimization_Model/model.py`, run by `main.py`: a Gurobi MILP that decides which nurse sees which patient each day. It minimizes mileage cost from each nurse's home plus a continuity penalty `w_c` for every extra nurse a patient sees. Each nurse-day's visits, the drive to each one, and the drive home must fit within the shift.
 2. **Sequencing (Layer 2)**, `Optimization_Model/sequencing.py`: takes those assignments and finds the visit order and timetable for every nurse-day.
-
-```bash
-python main.py                            # Layer 1 -> Outputs/nurse_daily_assignments.csv, patient_continuity.csv
-python -m Optimization_Model.sequencing   # Layer 2 -> Outputs/route_*.csv, unroutable_nurse_days.csv
-python -m Optimization_Model.sweep        # staffing sweep -> Outputs/staffing_sweep.csv (about 3 min)
-python -m Optimization_Model.figures      # presentation charts -> Outputs/figures/ (from the CSVs above, no re-solving)
-```
 
 ## Sequencing (Layer 2)
 
