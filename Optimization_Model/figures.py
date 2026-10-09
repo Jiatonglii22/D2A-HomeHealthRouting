@@ -1,5 +1,5 @@
 """
-Presentation figures, built from the CSVs the pipeline saves (no re-solving).
+Presentation figures, built from the CSVs the pipeline saves.
 
   staffing_sweep         weekly route cost vs % of patients who keep one nurse, one line per roster size
   cost_by_roster         weekly route cost per roster size: lowest-cost schedule vs full continuity
@@ -7,17 +7,14 @@ Presentation figures, built from the CSVs the pipeline saves (no re-solving).
   route_map_<day>        each nurse's route that day, one small map per nurse
   route_map_all_<day>    every nurse's route that day on one map, one colour per nurse, over a street basemap
 
-Each figure is saved to Outputs/figures/ as a 300 dpi PNG (slides, print) and an SVG (scales to any size).
+Each figure is saved to Outputs/figures/ as a PNG and an SVG.
 
 Inputs
   Outputs/staffing_sweep.csv                       from Optimization_Model/sweep.py
   Outputs/route_summary.csv, route_schedule.csv    from Optimization_Model/sequencing.py
   Datasets/Processed/synthetic_patients_397636.csv patient locations
-  Datasets/Forecast/nurses.csv                     nurse home locations (the synthetic roster; not in Processed)
-  Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp   ZIP outlines for route_map_all (needs geopandas)
-
-route_map_all draws street tiles with contextily (downloads tiles, needs internet). Without contextily or a
-connection it falls back to the ZIP outlines alone.
+  Datasets/Forecast/nurses.csv                     nurse home locations
+  Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp   ZIP outlines for route_map_all
 
 Run from the repo root, after main.py, sequencing and the sweep:  python -m Optimization_Model.figures
 """
@@ -44,14 +41,14 @@ ZIP_BOUNDARIES = Path('./Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.s
 LOWEST_COST_W_C = 0 # sweep weight for "ignore continuity"
 FULL_CONTINUITY_W_C = 500 # sweep weight that forces one nurse per patient
 
-# palette (validated for colour-vision deficiency and contrast on a white surface)
+# palette
 INK = '#0b0b0b'
 INK_2 = '#52514e'
 GRID = '#e6e5e1'
 AXIS = '#c3c2b7'
 BLUE = '#2a78d6' # series 1
 ORANGE = '#eb6834' # series 2
-SPARE = '#d9d8d3' # remainder / context, deliberately recessive
+SPARE = '#d9d8d3' # remainder / context
 ROSTER_COLORS = ['#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'] # one blue, light -> dark with roster size
 # categorical hues in fixed order (blue, orange, aqua, yellow, magenta, green, violet, red); nurses past the
 # 8th reuse them with a dashed line, so no two nurses share colour AND line style
@@ -76,16 +73,13 @@ def style(ax, title, xlabel=None, ylabel=None):
 def save(fig, name):
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(FIGURES_DIR / f'{name}.png', dpi=300) # sharp on projectors and in print
-    fig.savefig(FIGURES_DIR / f'{name}.svg') # vector: scales to any size in PowerPoint / Google Slides
+    fig.savefig(FIGURES_DIR / f'{name}.svg')
     plt.close(fig)
     print(f'  {FIGURES_DIR / name}.png / .svg')
 
 
 def usable_runs(sweep):
     """Runs from rosters that give a drivable schedule at EVERY w_c (a solution and no unroutable nurse-days).
-
-    Keeping whole rosters, not single runs, means each line averages the same rosters at every point,
-    so a point never moves just because a roster dropped out there.
     """
     solved = sweep['status'].str.startswith(('optimal', 'time limit'))
     good = (solved & (sweep['unroutable_days'] == 0)).groupby([sweep['nurse_count'], sweep['seed']]).transform('all')
@@ -96,9 +90,6 @@ def usable_runs(sweep):
 
 def plot_staffing_sweep(sweep):
     """Weekly route cost vs % of patients who keep one nurse, one line per roster size (averaged over draws).
-
-    Once continuity reaches a level, higher weights only reshuffle equally good schedules, so each line keeps
-    one point per continuity level: the lowest weight that reaches it.
     """
     draws_total = sweep['seed'].nunique()
     points = (usable_runs(sweep).groupby(['nurse_count', 'w_c'])
@@ -273,7 +264,6 @@ def web_mercator(lat, lon):
 
 def draw_background(ax):
     """Street tiles if contextily can fetch them, plus ZIP outlines if geopandas is installed.
-
     Returns the attribution the tiles require, or None if no tiles were drawn.
     """
     try:
@@ -294,7 +284,6 @@ def draw_background(ax):
 
 def plot_route_map_all(summary, schedule, patients, nurses):
     """One figure per day: every nurse's route on one map, one colour per nurse, visits numbered in order.
-
     A nurse keeps the same colour on every day (colour follows the nurse, not who happens to work).
     """
     roster = sorted(nurses['nurse_id'])

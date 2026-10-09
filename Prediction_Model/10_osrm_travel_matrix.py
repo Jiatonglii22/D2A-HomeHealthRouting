@@ -6,8 +6,6 @@ Writes travel_car.csv (long format, for Gurobi).
 Usage:
     python Datasets/osrm_travel_matrix.py                         # Datasets/Forecast (default)
     python Datasets/osrm_travel_matrix.py --data-dir Datasets/Dummy
-
-The data dir must contain nurses.csv and patients.csv with id, lat, lon columns.
 """
 
 import argparse
@@ -25,8 +23,8 @@ DEFAULT_DATA_DIR = Path("Datasets") / "Forecast"
 OUTPUT_PATH = Path("Datasets") / "Processed" / "travel_car.csv"
 
 OSRM_URL = "http://router.project-osrm.org/table/v1/driving/"
-MAX_COORDS_PER_REQUEST = 100   # demo server rejects larger tables with "TooBig"
-REQUEST_PAUSE_SECONDS = 1      # be polite to the shared demo server
+MAX_COORDS_PER_REQUEST = 100
+REQUEST_PAUSE_SECONDS = 1 
 
 
 def fetch_block(sources, destinations):

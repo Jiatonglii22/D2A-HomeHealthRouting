@@ -126,7 +126,6 @@ That is 5 sizes × 5 draws × 9 weights = 225 runs. Each run:
 - whether that roster can still give every patient a single nurse;
 - how much continuity costs as staff gets tighter.
 
-**It measures cost on real routes, not the model's estimate.** Assignment optimizes an estimate of driving (one-way miles from each nurse's home). The sweep scores every run on Layer 2's actual routes, so the curve shows money the agency would actually spend.
 
 ### What it records (`staffing_sweep.csv`, one row per run)
 
@@ -169,11 +168,10 @@ Continuity is computed from the actual assignments (`x`), not from the model's c
 - **Tighter staffing makes full continuity dearer:** +12% at 9 nurses, +8–9% at 10–11.
 - **Above `w_c = 25`, nothing changes:** every patient already keeps one nurse.
 
-**Caution:** assignment optimizes its driving estimate, not real routes, so real cost can move by about $10–15 between runs for reasons unrelated to staffing or continuity. For example, 11 nurses shows a dip at `w_c = 2`. Read the overall shape of each line, not small differences between neighbouring points or lines.
 
 ## Figures
 
-`python -m Optimization_Model.figures` draws every chart from the saved CSVs into `Outputs/figures/`. Each chart is saved as a 300 dpi PNG for slides and print, and as an SVG that scales to any size in PowerPoint or Google Slides.
+`python -m Optimization_Model.figures` draws every chart from the saved CSVs into `Outputs/figures/`. 
 
 | Figure | Built from | Shows |
 |---|---|---|
@@ -182,43 +180,3 @@ Continuity is computed from the actual assignments (`x`), not from the model's c
 | `nurse_time_breakdown` | current run (`w_c = 0.5`, 11 nurses) | how each nurse's week splits into visits, driving and spare time |
 | `route_map_<day>` | current run | every nurse's route that day |
 
-### `staffing_sweep`: what continuity of care costs, by roster size
-
-**How to read it:** weekly route cost (y) against the % of patients who keep one nurse all week (x), one line per roster size, lighter blue for fewer nurses. Reading a line left to right shows what each step toward full continuity costs. Each point averages the rosters that give a drivable schedule at every weight. The legend says how many of the 5 rosters that is.
-
-**The point for a slide:** each line rises gently at first and steeply over the last few percent. Most continuity comes almost free; the last few patients are what cost money.
-
-### `cost_by_roster`: weekly route cost by roster size
-
-**How to read it:** for each roster size, two bars. Blue is the cheapest schedule, ignoring continuity (`w_c = 0`); orange is full continuity, every patient with one nurse (`w_c = 500`). Bars average the usable rosters, and whiskers span the cheapest to the most expensive roster. 7 and 8 nurses are marked "cannot cover the week".
-
-**The point for a slide:** the gap between blue and orange is the weekly price of full continuity, and it widens as staffing tightens: about $47 at 9 nurses against $31–35 at 10–11. The whiskers show that which nurses you have matters about as much as how many.
-
-### `nurse_time_breakdown`: how each nurse spends the week
-
-**How to read it:** one bar per nurse, stacked to her total shift hours for the week: visits (blue), driving (orange) and spare shift time (gray), with the % of shift time in use.
-
-**The point for a slide:** workload is uneven. N010 is 93% busy while N009 is 31% busy. Across all nurses, 66% of shift hours are used: 200 h of visits and 64 h of driving. The model doesn't balance workload, so this is a candidate for a future constraint.
-
-### `route_map_<day>`: nurse routes, one figure per day
-
-**How to read it:** one small map per working nurse, all panels on the same scale. The black square is her home, where the route starts and ends. The numbered blue dots are her visits in order, and the gray dots are every patient that week, for context. Each panel's title gives visits, miles, shift start and return time.
-
-**The point for a slide:** it shows the decomposition working. Layer 1 decides who goes where, and Layer 2 orders the visits into a drivable loop. Nurses mostly serve patients near their own home.
-
-There is no street basemap: the map uses patient and nurse coordinates only.
-
-## Limitations
-
-**Assignment estimates driving time; it doesn't know the real route.** Assignment decides visits before any route exists, so its capacity constraint (`hours_worked`) uses an estimate: the one-way drive from the nurse's home to each patient, plus the drive home from her farthest patient that day (`home[i,d]`). Layer 2 then drives the real route, home → patients → home.
-
-The estimate originally left out the drive home. That underestimated daily driving on 37 of 50 nurse-days, by 27% on average, and left 2 nurse-days unroutable (shift overruns of 1 and 7 minutes, 13 of 203 visits). The team adopted the fix: the drive-home term, plus reading `travel_minutes` as `float` instead of `int`, which had dropped the fraction of every travel time. Assignment still solves to optimal (objective 360.21 → 366.51), and all 50 nurse-days now route.
-
-What remains:
-
-- **The estimate is now cautious.** It budgets about 20% more driving than the real routes need (4,599 vs 3,829 minutes this week). Nurses therefore take slightly fewer visits than they could, so continuity costs a little more: 12 patients see more than one nurse, against 8 before the fix.
-- **It is not guaranteed.** The drive home from the farthest patient stands in for the real route, so a nurse-day can still fail to fit. The staffing sweep found exactly that: in 3 of 135 solved runs, all on 9-nurse rosters at low weights, one nurse-day couldn't be driven. Layer 2's unroutable count is the check. Runs that fail it are left out of the sweep's charts, and `unroutable_nurse_days.csv` should be empty after every regular run.
-
-**Assignment optimizes estimated miles, not real route miles.** Real route cost therefore varies by about $10–15 between runs that assignment rates almost equally, so small differences in the sweep are noise. The overall trends hold across all three roster sizes.
-
-**No time windows in the forecast data.** Every visit can happen any time during the shift, so the waiting-time analysis can't be shown on the forecast week. It runs automatically once windows are added to the appointments file.
