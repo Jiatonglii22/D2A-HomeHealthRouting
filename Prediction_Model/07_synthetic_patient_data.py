@@ -1,7 +1,3 @@
-# ============================================================
-# Prediction_Model/12_synthetic_patient_data.py
-# ============================================================
-
 import os
 
 import numpy as np
@@ -9,11 +5,6 @@ import pandas as pd
 import geopandas as gpd
 
 from shapely.geometry import Point
-
-
-# ============================================================
-# SETTINGS
-# ============================================================
 
 SEED = 42
 rng = np.random.default_rng(SEED)
@@ -44,45 +35,21 @@ MIN_VISITS_PER_PATIENT = 1
 MAX_VISITS_PER_PATIENT = 3
 
 
-# ============================================================
-# FILE PATHS
-# ============================================================
-
-UTILIZATION_FILE = (
-    "Datasets/Raw/HH_UtilizationZip_2024.csv"
-)
-
-AGENCY_ZIP_FILE = (
-    "Datasets/Processed/agency_zip_demand.csv"
-)
-
-ZIP_SHAPEFILE = (
-    "Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp"
-)
-
-PATIENT_OUTPUT = (
-    "Datasets/Processed/synthetic_patients_397636.csv"
-)
-
-APPOINTMENT_OUTPUT = (
-    "Datasets/Processed/synthetic_appointments_397636.csv"
-)
+# file paths 
+UTILIZATION_FILE = ("Datasets/Raw/HH_UtilizationZip_2024.csv")
+AGENCY_ZIP_FILE = ("Datasets/Processed/agency_zip_demand.csv")
+ZIP_SHAPEFILE = ("Datasets/Raw/AlleghenyCounty__ZipCodeBoundaries202607.shp")
+PATIENT_OUTPUT = ("Datasets/Processed/synthetic_patients_397636.csv")
+APPOINTMENT_OUTPUT = ("Datasets/Processed/synthetic_appointments_397636.csv")
 
 
-# ============================================================
-# CREATE OUTPUT DIRECTORY
-# ============================================================
-
+# create output directory 
 os.makedirs(
     "Datasets/Processed",
     exist_ok=True
 )
 
-
-# ============================================================
 # 1. LOAD CMS UTILIZATION
-# ============================================================
-
 print("Loading CMS utilization data...")
 
 cms = pd.read_csv(
@@ -100,15 +67,10 @@ cms["PRVDR_ID"] = (
 )
 
 # Remove possible "<NA>" strings
-cms = cms[
-    cms["PRVDR_ID"] != "<NA>"
-].copy()
+cms = cms[cms["PRVDR_ID"] != "<NA>"].copy()
 
 
-# ============================================================
 # 2. FILTER CMS DATA
-# ============================================================
-
 # Keep:
 #   2024
 #   Calendar year
@@ -131,11 +93,7 @@ if agency_cms.empty:
         f"for agency {AGENCY_ID}."
     )
 
-
-# ============================================================
 # 3. GET ANNUAL UTILIZATION
-# ============================================================
-
 def numeric_value(df, column):
     """
     Convert a CMS numeric column to a usable number.
@@ -148,7 +106,6 @@ def numeric_value(df, column):
         .fillna(0)
         .sum()
     )
-
 
 annual_beneficiaries = int(
     numeric_value(
@@ -164,54 +121,24 @@ annual_nursing_visits = int(
     )
 )
 
-
 print("\nAnnual CMS utilization:")
-print(
-    f"  Beneficiaries:  {annual_beneficiaries:,}"
-)
+print(f"  Beneficiaries:  {annual_beneficiaries:,}")
+print(f"  Nursing visits: {annual_nursing_visits:,}")
 
-print(
-    f"  Nursing visits: {annual_nursing_visits:,}"
-)
-
-
-# ============================================================
 # 4. CONVERT ANNUAL NURSING VISITS TO WEEKLY DEMAND
-# ============================================================
-
 expected_weekly_visits = (
     annual_nursing_visits
     / WEEKS_PER_YEAR
 )
 
 print("\nExpected weekly utilization:")
-
 print(
     f"  Weekly nursing visits: "
     f"{expected_weekly_visits:.2f}"
 )
 
-
-# ============================================================
 # 5. SAMPLE A REALISTIC WEEKLY NUMBER OF VISITS
-# ============================================================
-
 # Use a Poisson distribution around the annual average.
-#
-# Example:
-#
-#   annual visits = 9,946
-#   expected weekly = 191.27
-#
-# One synthetic week could therefore have:
-#
-#   188 visits
-#   193 visits
-#   197 visits
-#
-# This avoids forcing every synthetic week to contain
-# exactly the same number of visits.
-
 weekly_nursing_visits = int(
     rng.poisson(
         expected_weekly_visits
@@ -224,11 +151,7 @@ print(
     f"{weekly_nursing_visits}"
 )
 
-
-# ============================================================
 # 6. LOAD AGENCY × ZIP DEMAND
-# ============================================================
-
 print(
     "\nLoading agency × ZIP demand..."
 )
@@ -256,11 +179,7 @@ if agency_zip.empty:
         f"for {AGENCY_ID}."
     )
 
-
-# ============================================================
 # 7. CHECK FOR NURSING-VISIT DEMAND COLUMN
-# ============================================================
-
 required_demand_column = (
     "estimated_agency_zip_nursing_visits"
 )
@@ -273,18 +192,10 @@ if required_demand_column not in agency_zip.columns:
         f"{agency_zip.columns.tolist()}"
     )
 
-
-# ============================================================
 # 8. LOAD ZIP POLYGONS
-# ============================================================
+print("\nLoading ZIP polygons...")
 
-print(
-    "\nLoading ZIP polygons..."
-)
-
-zip_gdf = gpd.read_file(
-    ZIP_SHAPEFILE
-)
+zip_gdf = gpd.read_file(ZIP_SHAPEFILE)
 
 zip_gdf["ZIP"] = (
     zip_gdf["ZIP"]
@@ -298,9 +209,7 @@ agency_zip["zip"] = (
     .str.strip()
 )
 
-
 # Keep only ZIPs for this agency that have geometry
-
 agency_zip = agency_zip[
     agency_zip["zip"].isin(
         zip_gdf["ZIP"]
@@ -318,15 +227,10 @@ print(
     f"agency-ZIP rows to ZIP polygons."
 )
 
-
-# ============================================================
 # 9. CREATE ZIP SAMPLING PROBABILITIES
-# ============================================================
-
 # estimated_agency_zip_nursing_visits represents the
 # estimated annual nursing visits for this agency in
 # each ZIP.
-#
 # We use this as the probability that a synthetic
 # nursing visit/patient is located in each ZIP.
 
@@ -350,7 +254,6 @@ agency_zip["zip_probability"] = (
 )
 
 # Numerical cleanup
-
 agency_zip["zip_probability"] = (
     agency_zip["zip_probability"]
     .fillna(0)
@@ -358,7 +261,6 @@ agency_zip["zip_probability"] = (
 
 # Normalize again to ensure probabilities
 # sum exactly to 1
-
 agency_zip["zip_probability"] = (
     agency_zip["zip_probability"]
     / agency_zip["zip_probability"].sum()
@@ -382,13 +284,8 @@ print(
 )
 
 
-# ============================================================
 # 10. CREATE SYNTHETIC BENEFICIARIES
-# ============================================================
-
-print(
-    "\nCreating synthetic beneficiaries..."
-)
+print("\nCreating synthetic beneficiaries...")
 
 patients = pd.DataFrame({
     "patient_id": [
@@ -402,16 +299,7 @@ patients = pd.DataFrame({
 
 patients["agency_id"] = AGENCY_ID
 
-
-# ============================================================
 # 11. DETERMINE WEEKLY VISIT PARTICIPANTS
-# ============================================================
-
-# We are no longer assigning annual episodes.
-#
-# Instead, annual nursing visits are converted directly
-# into a weekly nursing-visit demand.
-#
 # Each active patient receives between 1 and 3
 # nursing visits during the synthetic week.
 
@@ -434,9 +322,7 @@ if weekly_nursing_visits < len(patients):
     # can receive visits during this synthetic week.
     min_active_patients = 1
 
-    max_active_patients = (
-        weekly_nursing_visits
-    )
+    max_active_patients = (weekly_nursing_visits)
 
 else:
     # If there are enough visits for every patient
@@ -453,10 +339,7 @@ else:
         len(patients)
     )
 
-
-# Randomly choose the number of patients
-# who receive visits
-
+# Randomly choose the number of patients who receive visits
 n_active_patients = int(
     rng.integers(
         min_active_patients,
@@ -464,16 +347,12 @@ n_active_patients = int(
     )
 )
 
-
-# Randomly select the patients who will
-# have visits this week
-
+# Randomly select the patients who will have visits this week
 active_patient_indices = rng.choice(
     patients.index,
     size=n_active_patients,
     replace=False
 )
-
 
 weekly_patients = (
     patients
@@ -481,29 +360,18 @@ weekly_patients = (
     .copy()
 )
 
-
-# ============================================================
 # 12. ASSIGN 1–3 WEEKLY VISITS
-# ============================================================
-
 # Start every active patient with 1 visit.
-
 weekly_patients["weekly_visits"] = 1
 
-
 # Remaining visits
-
 remaining_visits = (
     weekly_nursing_visits
     - n_active_patients
 )
 
-
 while remaining_visits > 0:
-
-    # Patients who can still receive
-    # another visit
-
+    # Patients who can still receive another visit
     eligible_indices = (
         weekly_patients.index[
             weekly_patients[
@@ -520,13 +388,11 @@ while remaining_visits > 0:
         )
 
     # Randomly choose one eligible patient
-
     patient_idx = rng.choice(
         eligible_indices
     )
 
     # Add one visit
-
     weekly_patients.loc[
         patient_idx,
         "weekly_visits"
@@ -534,11 +400,7 @@ while remaining_visits > 0:
 
     remaining_visits -= 1
 
-
-# ============================================================
 # 13. PRINT VISIT DISTRIBUTION
-# ============================================================
-
 patients_1_visit = (
     weekly_patients[
         "weekly_visits"
@@ -590,11 +452,7 @@ print(
     f"{weekly_nursing_visits}"
 )
 
-
-# ============================================================
 # 14. ASSIGN ZIP CODES TO WEEKLY PATIENTS
-# ============================================================
-
 # ZIP assignment is based on the agency's estimated
 # annual nursing-visit demand by ZIP.
 
@@ -604,24 +462,14 @@ weekly_patients["zip"] = rng.choice(
     p=agency_zip["zip_probability"].to_numpy()
 )
 
-
-# ============================================================
 # 15. GENERATE RANDOM LOCATION INSIDE EACH ZIP POLYGON
-# ============================================================
-
-print(
-    "\nGenerating patient locations..."
-)
+print("\nGenerating patient locations...")
 
 # Use same CRS as shapefile for point generation
-
 working_crs = zip_gdf.crs
-
 patient_records = []
 
-
 for _, patient in weekly_patients.iterrows():
-
     zip_code = patient["zip"]
 
     polygon = zip_gdf.loc[
@@ -630,31 +478,18 @@ for _, patient in weekly_patients.iterrows():
     ].iloc[0]
 
     # Bounding box
-
-    minx, miny, maxx, maxy = (
-        polygon.bounds
-    )
+    minx, miny, maxx, maxy = (polygon.bounds)
 
     # Rejection sampling
-
     point = None
 
     for _ in range(10000):
 
-        x = rng.uniform(
-            minx,
-            maxx
-        )
+        x = rng.uniform(minx, maxx)
 
-        y = rng.uniform(
-            miny,
-            maxy
-        )
+        y = rng.uniform(miny, maxy)
 
-        candidate = Point(
-            x,
-            y
-        )
+        candidate = Point(x, y)
 
         if polygon.contains(candidate):
             point = candidate
@@ -679,35 +514,18 @@ patient_gdf = gpd.GeoDataFrame(
     crs=working_crs
 )
 
-
-# ============================================================
 # 16. CONVERT TO LATITUDE/LONGITUDE
-# ============================================================
+patient_gdf = patient_gdf.to_crs("EPSG:4326")
 
-patient_gdf = patient_gdf.to_crs(
-    "EPSG:4326"
-)
+patient_gdf["longitude"] = (patient_gdf.geometry.x)
 
-patient_gdf["longitude"] = (
-    patient_gdf.geometry.x
-)
-
-patient_gdf["latitude"] = (
-    patient_gdf.geometry.y
-)
+patient_gdf["latitude"] = (patient_gdf.geometry.y)
 
 
 # Drop geometry before saving CSV
+patients_output = patient_gdf.drop(columns="geometry")
 
-patients_output = patient_gdf.drop(
-    columns="geometry"
-)
-
-
-# ============================================================
 # 17. SAVE PATIENT DATA
-# ============================================================
-
 patients_output.to_csv(
     PATIENT_OUTPUT,
     index=False
@@ -718,35 +536,23 @@ print(
     f"{PATIENT_OUTPUT}"
 )
 
-
-# ============================================================
 # 18. CREATE WEEKLY APPOINTMENTS
-# ============================================================
-
 # Each nursing visit becomes one appointment.
-#
 # Each patient has 1–3 appointments per week.
-#
 # A patient cannot have more than one appointment
 # on the same weekday.
-#
 # Appointment durations:
-#
 #     30 minutes
 #     60 minutes
 #     90 minutes
 
 appointments = []
 
-
 for _, patient in patients_output.iterrows():
 
-    n_visits = int(
-        patient["weekly_visits"]
-    )
+    n_visits = int(patient["weekly_visits"])
 
     # Randomly select distinct weekdays
-
     selected_days = rng.choice(
         DAYS,
         size=n_visits,
@@ -754,7 +560,6 @@ for _, patient in patients_output.iterrows():
     )
 
     # Sort weekdays chronologically
-
     day_order = {
         "Monday": 0,
         "Tuesday": 1,
@@ -774,7 +579,6 @@ for _, patient in patients_output.iterrows():
     ):
 
         # Randomly select appointment duration
-
         service_time = int(
             rng.choice(
                 APPOINTMENT_DURATIONS
@@ -788,30 +592,18 @@ for _, patient in patients_output.iterrows():
             ),
 
             "patient_id": patient["patient_id"],
-
             "agency_id": AGENCY_ID,
-
             "zip": patient["zip"],
-
             "day": day,
-
             "service_time_minutes": service_time,
-
             "latitude": patient["latitude"],
-
             "longitude": patient["longitude"]
         })
 
 
-appointments_df = pd.DataFrame(
-    appointments
-)
+appointments_df = pd.DataFrame(appointments)
 
-
-# ============================================================
 # 19. SAVE APPOINTMENTS
-# ============================================================
-
 appointments_df.to_csv(
     APPOINTMENT_OUTPUT,
     index=False
@@ -822,11 +614,7 @@ print(
     f"{APPOINTMENT_OUTPUT}"
 )
 
-
-# ============================================================
 # 20. VALIDATION
-# ============================================================
-
 print("\n" + "=" * 60)
 print("VALIDATION")
 print("=" * 60)
@@ -882,7 +670,6 @@ print(
     .astype(int)
 )
 
-
 print("\nAppointment duration distribution:")
 
 print(
@@ -893,7 +680,6 @@ print(
     .sort_index()
 )
 
-
 print("\nAppointments by ZIP:")
 
 print(
@@ -901,7 +687,6 @@ print(
     .value_counts()
     .head(10)
 )
-
 
 print("\nLocation summary:")
 
@@ -914,11 +699,7 @@ print(
     ].describe()
 )
 
-
-# ============================================================
 # 21. FINAL VALIDATION CHECKS
-# ============================================================
-
 # Total appointments must exactly equal the
 # sampled weekly nursing-visit target.
 
@@ -929,7 +710,6 @@ assert (
     "Total generated appointments do not match "
     "the CMS-derived weekly nursing-visit target."
 )
-
 
 # Every patient has between 1 and 3 appointments.
 
@@ -949,7 +729,6 @@ assert (
     "more than 3 appointments."
 )
 
-
 # No patient has multiple appointments
 # on the same weekday.
 
@@ -965,7 +744,6 @@ assert not appointments_df.duplicated(
 
 
 # Every appointment has a valid duration.
-
 assert appointments_df[
     "service_time_minutes"
 ].isin(
@@ -973,7 +751,6 @@ assert appointments_df[
 ).all(), (
     "Unexpected appointment duration found."
 )
-
 
 print(
     "\nAll appointment validation checks passed."

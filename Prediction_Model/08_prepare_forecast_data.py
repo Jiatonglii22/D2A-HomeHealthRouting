@@ -1,6 +1,6 @@
 """
-Turn the forecast output of Prediction_Model/12_synthetic_patient_data.py into the
-input format main.py / Optimization_Model/model.py expect (same layout as Datasets/Dummy).
+Turn the forecast output of Prediction_Model/07_synthetic_patient_data.py into the
+input format main.py / Optimization_Model/model.py expect 
 
 Reads   Datasets/Processed/synthetic_patients_<AGENCY>.csv
         Datasets/Processed/synthetic_appointments_<AGENCY>.csv
@@ -13,8 +13,6 @@ The forecast has no staffing data, so the nurse roster is generated here (seeded
   - headcount is sized from the busiest day's workload, plus slack
   - each nurse's home base is placed in a ZIP drawn in proportion to forecast visits,
     next to a forecast patient location in that ZIP (OSRM snaps it to the nearest road)
-
-Next steps:  python Datasets/osrm_travel_matrix.py   then   python main.py
 """
 
 import math

@@ -5,7 +5,7 @@ Writes travel_car.csv (long format, for Gurobi).
 
 Usage:
     python Datasets/osrm_travel_matrix.py                         # Datasets/Forecast (default)
-    python Datasets/osrm_travel_matrix.py --data-dir Datasets/Dummy
+    python Datasets/osrm_travel_matrix.py 
 """
 
 import argparse
@@ -15,9 +15,7 @@ import requests
 import pandas as pd
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
 # Coordinates are (latitude, longitude) here -- the script flips them for OSRM.
-# ---------------------------------------------------------------------------
 DEPOT = ("Agency", 40.6847801208496, -80.0629425048828)
 DEFAULT_DATA_DIR = Path("Datasets") / "Forecast"
 OUTPUT_PATH = Path("Datasets") / "Processed" / "travel_car.csv"
